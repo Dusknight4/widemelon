@@ -52,6 +52,18 @@
   about 0.5 ms of extra emulation time per frame. Not hardware-accurate; turn
   it off if a game misbehaves. Savestates load correctly whichever way this
   was set when they were made. Setting: `Emu.ReduceSlowdown`.
+- **Overlay screen layout** (the new default; View > Screen layout >
+  Overlay, or the Screen layout setting in WideMelon's settings). The top
+  screen fills the whole window, centered and scaled to the window's height
+  without stretching, and the touchscreen sits in the top-right corner, in
+  the strip beside the picture a DS would show, so it never covers any of
+  that picture. At startup WideMelon widens the world view to at least the
+  window's shape and the screen's, so the top screen covers the window
+  edge to edge (the viewport you chose is kept as a minimum). Clicks on the
+  corner touchscreen touch the DS screen; swapping screens puts the
+  touchscreen in the middle and the top screen in the corner, and with a
+  phone connected only the top screen is shown. The touchscreen is smaller
+  than in the side-by-side layout on screens narrower than 16:9.
 - **Use either stick** (Config > Input and hotkeys, next to the joystick
   picker, on by default). A joystick binding to a stick direction also works
   with the same direction on the other analog stick, so on a Nintendo Switch

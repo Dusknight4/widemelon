@@ -73,6 +73,7 @@ DefaultList<int> DefaultInts =
 #endif
     {"LAN.HostNumPlayers", 16},
     {"WideMelon.Phone.BasePort", 24800},
+    {"WideMelon.ScreenLayout", screenLayout_Overlay},
     {"WideMelon.Phone.JpegQuality", 85},
     {"WideMelon.Phone.LogLevel", 1},
 };
@@ -95,6 +96,7 @@ RangeList IntRanges =
     {"MP.AudioMode", {0, 2}},
     {"LAN.HostNumPlayers", {2, 16}},
     {"WideMelon.Phone.BasePort", {1024, 65534}},
+    {"WideMelon.ScreenLayout", {0, screenLayout_MAX-1}},
     {"WideMelon.Phone.JpegQuality", {30, 100}},
     {"WideMelon.Phone.LogLevel", {0, 3}},
 };

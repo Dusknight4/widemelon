@@ -248,6 +248,10 @@ QSize ScreenPanel::screenGetMinSize(int factor = 1)
         else
             return QSize(w+gap+w, h);
     }
+    else if (screenLayout == screenLayout_Overlay)
+    {
+        return QSize(w, h);
+    }
     else // hybrid
     {
         if (isHori)

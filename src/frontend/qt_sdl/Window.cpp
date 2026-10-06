@@ -499,7 +499,7 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
                 QMenu * submenu = menu->addMenu("Screen layout");
                 grpScreenLayout = new QActionGroup(submenu);
 
-                const char *screenlayout[] = {"Natural", "Vertical", "Horizontal", "Hybrid"};
+                const char *screenlayout[] = {"Natural", "Vertical", "Horizontal", "Hybrid", "Overlay"};
 
                 for (int i = 0; i < screenLayout_MAX; i++)
                 {
@@ -2367,8 +2367,15 @@ void MainWindow::onChangeScreenLayout(QAction* act)
 {
     int layout = act->data().toInt();
     windowCfg.SetInt("ScreenLayout", layout);
+    // WideMelon applies its layout at every start (see WideMelonSetup)
+    globalCfg.SetInt("WideMelon.ScreenLayout", layout);
 
     emit screenLayoutChange();
+
+    // the world view is widened for the Overlay layout when WideMelon starts
+    if (layout == screenLayout_Overlay && panel && panel->height() > 0
+        && WideMelon::Width() * panel->height() < 192 * panel->width())
+        osdAddMessage(0, "Restart WideMelon to widen the view to fill the window");
 }
 
 void MainWindow::onChangeScreenSwap(bool checked)

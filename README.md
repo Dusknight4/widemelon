@@ -38,6 +38,8 @@ scan the QR code and play from your phone's browser.
 
 - Motion smoothing: in-between frames make 30 fps games such as the Pokémon
   overworlds play like 60 fps, and add extra frames on 120 Hz displays.
+- Overlay layout: the top screen fills the whole window and the touchscreen
+  sits in the top-right corner, beside the picture a DS would show.
 - No more black lines between terrain tiles in the classic OpenGL renderer.
 - Reduce in-game slowdown: no more pauses and jumps while games load data,
   for example when walking through towns in the Pokémon games.

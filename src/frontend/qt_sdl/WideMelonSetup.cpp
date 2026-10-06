@@ -4,12 +4,14 @@
 #include "WideMelonSetup.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGuiApplication>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -17,6 +19,7 @@
 #include <QMoveEvent>
 #include <QPointer>
 #include <QPushButton>
+#include <QScreen>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -79,6 +82,30 @@ void setDefaultKey(Config::Table& keys, const char* name, int key)
         keys.SetInt(name, key);
 }
 
+int savedScreenLayout()
+{
+    const int layout = Config::GetGlobalTable().GetInt("WideMelon.ScreenLayout");
+    return (layout >= 0 && layout < screenLayout_MAX) ? layout : screenLayout_Overlay;
+}
+
+// The Overlay layout fills the window with the top screen, so the world view is
+// widened at startup to at least the window's shape and the screen's (for
+// fullscreen). The view width can't change while WideMelon runs.
+int overlayViewWidth(int viewWidth, int windowWidth, int windowHeight)
+{
+    constexpr int kMenuBarHeight = 32; // roughly; a few extra columns are only cropped
+    double aspect = static_cast<double>(windowWidth) / std::max(1, windowHeight - kMenuBarHeight);
+    if (QScreen* screen = QGuiApplication::primaryScreen())
+    {
+        const QSize size = screen->size();
+        if (size.height() > 0)
+            aspect = std::max(aspect, static_cast<double>(size.width()) / size.height());
+    }
+    int needed = static_cast<int>(std::ceil(192.0 * aspect));
+    needed += needed & 1;
+    return std::clamp(std::max(viewWidth, needed), 256, 768);
+}
+
 void applyProfile(int viewWidth, int scale, int windowWidth, int windowHeight,
                   bool integerScaling, bool fullscreen)
 {
@@ -87,7 +114,11 @@ void applyProfile(int viewWidth, int scale, int windowWidth, int windowHeight,
     windowWidth = std::clamp(windowWidth, 640, 7680);
     windowHeight = std::clamp(windowHeight, 480, 4320);
 
-    qputenv("WIDEMELON_VIEW_WIDTH", QByteArray::number(viewWidth));
+    const int screenLayout = savedScreenLayout();
+    const int renderWidth = (screenLayout == screenLayout_Overlay)
+        ? overlayViewWidth(viewWidth, windowWidth, windowHeight) : viewWidth;
+
+    qputenv("WIDEMELON_VIEW_WIDTH", QByteArray::number(renderWidth));
     qputenv("WIDEMELON_SCALE", QByteArray::number(scale));
     qputenv("WIDEMELON_WINDOW_WIDTH", QByteArray::number(windowWidth));
     qputenv("WIDEMELON_WINDOW_HEIGHT", QByteArray::number(windowHeight));
@@ -111,7 +142,7 @@ void applyProfile(int viewWidth, int scale, int windowWidth, int windowHeight,
     window.SetBool("ScreenFilter", false);
     window.SetInt("Width", windowWidth);
     window.SetInt("Height", windowHeight);
-    window.SetInt("ScreenLayout", screenLayout_Horizontal);
+    window.SetInt("ScreenLayout", screenLayout);
     window.SetInt("ScreenSizing", screenSizing_EmphTop);
     window.SetInt("ScreenAspectTop", 0);
     window.SetInt("ScreenAspectBot", 0);
@@ -198,6 +229,13 @@ public:
         integerScaling = new QCheckBox("Integer scaling");
         videoLayout->addRow("Presentation", integerScaling);
 
+        screenLayout = new QComboBox;
+        screenLayout->addItem("Overlay: bottom screen in the top-right corner", int(screenLayout_Overlay));
+        screenLayout->addItem("Side by side", int(screenLayout_Horizontal));
+        screenLayout->setToolTip("Overlay: the top screen fills the window, widened to its shape, and the "
+                                 "bottom screen sits in the top-right corner, beside the area a DS would show.");
+        videoLayout->addRow("Screen layout", screenLayout);
+
         summary = new QLabel;
         summary->setWordWrap(true);
         videoLayout->addRow(QString(), summary);
@@ -228,7 +266,11 @@ public:
         windowWidth->setValue(std::clamp(savedWindowWidth > 0 ? savedWindowWidth : kDefaultWindowWidth, 640, 7680));
         windowHeight->setValue(std::clamp(savedWindowHeight > 0 ? savedWindowHeight : kDefaultWindowHeight, 480, 4320));
         integerScaling->setChecked(global.GetBool("WideMelon.IntegerScaling"));
+        const int layoutIndex = screenLayout->findData(savedScreenLayout());
+        screenLayout->setCurrentIndex(layoutIndex >= 0 ? layoutIndex : 1);
         fullscreen->setChecked(global.GetBool("WideMelon.Fullscreen"));
+        connect(screenLayout, qOverload<int>(&QComboBox::currentIndexChanged), this,
+                [this] { updateSummary(); });
         connect(viewport, qOverload<int>(&QComboBox::currentIndexChanged), this,
                 [this] { updateViewportControls(); });
         connect(resolution, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -262,9 +304,10 @@ public:
         const int outputWidth = resolutionIndex < 6 ? fixedResolutionWidth(resolutionIndex) : windowWidth->value();
         const int outputHeight = resolutionIndex < 6 ? fixedResolutionHeight(resolutionIndex) : windowHeight->value();
 
+        auto global = Config::GetGlobalTable();
+        global.SetInt("WideMelon.ScreenLayout", screenLayout->currentData().toInt());
         applyProfile(viewWidth, scale->currentData().toInt(), outputWidth, outputHeight,
                      integerScaling->isChecked(), fullscreen->isChecked());
-        auto global = Config::GetGlobalTable();
         global.SetInt("WideMelon.Resolution", resolutionIndex);
         Config::Save();
     }
@@ -324,9 +367,16 @@ private:
         const int resolutionIndex = resolution->currentIndex();
         const int outputWidth = resolutionIndex < 6 ? fixedResolutionWidth(resolutionIndex) : windowWidth->value();
         const int outputHeight = resolutionIndex < 6 ? fixedResolutionHeight(resolutionIndex) : windowHeight->value();
-        summary->setText(QString("%1 × 192 world view · %2 × %3 3D framebuffer · +%4% horizontal view · %5 × %6 output")
-                         .arg(viewWidth).arg(viewWidth * renderScale).arg(192 * renderScale)
-                         .arg(extraPercent).arg(outputWidth).arg(outputHeight));
+        QString text = QString("%1 × 192 world view · %2 × %3 3D framebuffer · +%4% horizontal view · %5 × %6 output")
+                           .arg(viewWidth).arg(viewWidth * renderScale).arg(192 * renderScale)
+                           .arg(extraPercent).arg(outputWidth).arg(outputHeight);
+        if (screenLayout->currentData().toInt() == screenLayout_Overlay)
+        {
+            const int overlayWidth = overlayViewWidth(viewWidth, outputWidth, outputHeight);
+            if (overlayWidth > viewWidth)
+                text += QString(" · Overlay widens the view to %1 × 192 to fill the window").arg(overlayWidth);
+        }
+        summary->setText(text);
     }
 
     QLabel* summary;
@@ -337,6 +387,7 @@ private:
     QSpinBox* windowHeight;
     QComboBox* scale;
     QCheckBox* integerScaling;
+    QComboBox* screenLayout;
     QCheckBox* fullscreen;
     QPointer<PhoneScreenDialog> phoneDialog;
 };

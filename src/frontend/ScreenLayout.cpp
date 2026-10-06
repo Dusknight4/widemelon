@@ -118,6 +118,67 @@ ScreenLayout::ScreenLayout()
     HybEnable = false;
     HybScreen = 0;
     HybPrevTouchScreen = 0;
+    OverlayEnable = false;
+    OverlaySwap = false;
+}
+
+// WideMelon: one screen fills the display, centered, and the other sits in its
+// top-right corner. The main screen is scaled to the display's height without
+// stretching; a widened top screen then reaches past the 256-pixel picture a
+// DS shows, and the corner screen goes in that extra strip so it doesn't cover
+// any of that picture. Rotation isn't applied in this layout.
+void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly,
+    bool integerScale, bool swapScreens,
+    float topAspect, float botAspect)
+{
+    // with only the top screen shown (the phone has the bottom one), it fills the display
+    if (mainOnly)
+        swapScreens = false;
+
+    HybEnable = false;
+    OverlayEnable = true;
+    OverlaySwap = swapScreens;
+
+    float* mainMtx = swapScreens ? BotScreenMtx : TopScreenMtx;
+    float* sideMtx = swapScreens ? TopScreenMtx : BotScreenMtx;
+    const float mainAspect = swapScreens ? botAspect : topAspect;
+    const float sideAspect = swapScreens ? topAspect : botAspect;
+
+    // fill the height, unless that would cut into the DS picture's width;
+    // whatever doesn't fit across is widened view, cut evenly at both sides
+    float scale = std::min(screenHeight / 192.f, screenWidth / 256.f);
+    if (integerScale && scale >= 1.f)
+        scale = floorf(scale);
+
+    const float mainWidth = 256.f * mainAspect * scale;
+    const float mainHeight = 192.f * scale;
+    M23_Identity(mainMtx);
+    M23_Scale(mainMtx, mainAspect * scale, scale);
+    M23_Translate(mainMtx, (screenWidth - mainWidth) / 2, (screenHeight - mainHeight) / 2);
+
+    // the corner screen fills the strip between the DS picture and the right
+    // edge of the display, at most half the display's height tall
+    const float sideUnitWidth = 256.f * sideAspect;
+    float sideScale = (screenWidth / 2.f - 128.f * scale) / sideUnitWidth;
+    sideScale = std::min(sideScale, (screenHeight / 2.f) / 192.f);
+    // too narrow to be usable (a display close to 4:3): accept some overlap
+    sideScale = std::max(sideScale, (screenHeight / 10.f) / 192.f);
+    const float sideWidth = sideUnitWidth * sideScale;
+
+    M23_Identity(sideMtx);
+    M23_Scale(sideMtx, sideAspect * sideScale, sideScale);
+    M23_Translate(sideMtx, screenWidth - sideWidth, 0);
+
+    TopEnable = true;
+    BotEnable = !mainOnly;
+
+    // touch coordinates undo the bottom screen's scale and offset
+    const float* bot = BotScreenMtx;
+    M23_Identity(TouchMtx);
+    TouchMtx[0] = 1.f / bot[0];
+    TouchMtx[3] = 1.f / bot[3];
+    TouchMtx[4] = -bot[4] / bot[0];
+    TouchMtx[5] = -bot[5] / bot[3];
 }
 
 void ScreenLayout::Setup(int screenWidth, int screenHeight,
@@ -129,6 +190,19 @@ void ScreenLayout::Setup(int screenWidth, int screenHeight,
     bool swapScreens,
     float topAspect, float botAspect)
 {
+    OverlayEnable = false;
+    OverlaySwap = false;
+    if (screenLayout == screenLayout_Overlay)
+    {
+        if (sizing != screenSizing_BotOnly)
+        {
+            SetupOverlay(screenWidth, screenHeight, sizing == screenSizing_TopOnly,
+                         integerScale, swapScreens, topAspect, botAspect);
+            return;
+        }
+        screenLayout = screenLayout_Natural;
+    }
+
     HybEnable = screenLayout == 3;
     if (HybEnable)
     {
@@ -449,6 +523,21 @@ void ScreenLayout::Setup(int screenWidth, int screenHeight,
 int ScreenLayout::GetScreenTransforms(float* out, int* kind)
 {
     int num = 0;
+    if (OverlayEnable && OverlaySwap)
+    {
+        // the bottom screen is underneath, so it's drawn first
+        if (BotEnable)
+        {
+            memcpy(out + 6*num, BotScreenMtx, sizeof(BotScreenMtx));
+            kind[num++] = 1;
+        }
+        if (TopEnable)
+        {
+            memcpy(out + 6*num, TopScreenMtx, sizeof(TopScreenMtx));
+            kind[num++] = 0;
+        }
+        return num;
+    }
     if (TopEnable)
     {
         memcpy(out + 6*num, TopScreenMtx, sizeof(TopScreenMtx));

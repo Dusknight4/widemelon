@@ -25,6 +25,7 @@ enum ScreenLayoutType
     screenLayout_Vertical,
     screenLayout_Horizontal,
     screenLayout_Hybrid,
+    screenLayout_Overlay, // WideMelon: top screen fills the display, bottom screen in its top-right corner
     screenLayout_MAX,
 };
 
@@ -89,6 +90,12 @@ public:
     bool GetTouchCoords(int& x, int& y, bool clamp);
 
 private:
+    void SetupOverlay(int screenWidth, int screenHeight, bool mainOnly,
+                      bool integerScale, bool swapScreens,
+                      float topAspect, float botAspect);
+
+    bool OverlayEnable;
+    bool OverlaySwap; // the bottom screen fills the display and the top screen sits in the corner
     float TopScreenMtx[6];
     float BotScreenMtx[6];
     float HybScreenMtx[6];
