@@ -375,6 +375,13 @@ private:
     int joystickID;
     SDL_Joystick* joystick;
     SDL_GameController* controller;
+    // WideMelon: either analog stick works for a stick binding. stickTwin
+    // holds the same axis on the other stick (-1 if none), from the
+    // controller's SDL mapping; stickAxisBound marks stick directions bound
+    // to something themselves, which aren't mirrored.
+    bool twinSticks = true;
+    int stickTwin[16];
+    bool stickAxisBound[16][2];
     bool hasAccelerometer = false;
     bool hasGyroscope = false;
     bool hasRumble = false;

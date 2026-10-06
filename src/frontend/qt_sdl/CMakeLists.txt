@@ -10,6 +10,7 @@ set(SOURCES_QT_SDL
     FrameInterpolator.h
     FrameInterpolator.cpp
     PresentPacer.h
+    TwinSticks.h
     Window.cpp
     EmuInstance.cpp
     EmuInstanceAudio.cpp

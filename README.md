@@ -41,6 +41,8 @@ scan the QR code and play from your phone's browser.
 - No more black lines between terrain tiles in the classic OpenGL renderer.
 - Reduce in-game slowdown: no more pauses and jumps while games load data,
   for example when walking through towns in the Pokémon games.
+- Either analog stick moves you: on a Switch Pro, Xbox or PlayStation
+  controller, a binding to one stick also works with the other.
 - One self-contained Windows `.exe`: nothing to install, no DLLs.
 - True widescreen 3D views from native 4:3 through 32:9.
 - Unstretched 2D interfaces, menus, sprites, videos, and touchscreen content.

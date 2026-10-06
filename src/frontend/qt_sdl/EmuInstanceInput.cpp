@@ -16,10 +16,13 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
+#include <cstring>
+
 #include <QKeyEvent>
 #include <SDL2/SDL.h>
 
 #include "Platform.h"
+#include "TwinSticks.h"
 #include "SDL_gamecontroller.h"
 #include "SDL_sensor.h"
 #include "main.h"
@@ -98,6 +101,8 @@ void EmuInstance::inputInit()
 
     joystick = nullptr;
     controller = nullptr;
+    for (int& twin : stickTwin) twin = -1;
+    memset(stickAxisBound, 0, sizeof(stickAxisBound));
     hasRumble = false;
     hasAccelerometer = false;
     hasGyroscope = false;
@@ -132,6 +137,7 @@ void EmuInstance::inputLoadConfig()
         hkJoyMapping[i] = joycfg.GetInt(hotkeyNames[i]);
     }
 
+    twinSticks = localCfg.GetBool("JoystickTwinSticks");
     setJoystick(localCfg.GetInt("JoystickID"));
     SDL_UnlockMutex(joyMutex.get());
 }
@@ -228,8 +234,11 @@ void EmuInstance::setJoystick(int id)
 void EmuInstance::openJoystick()
 {
     if (controller) SDL_GameControllerClose(controller);
+    controller = nullptr;
 
     if (joystick) SDL_JoystickClose(joystick);
+
+    for (int& twin : stickTwin) twin = -1;
 
     int num = SDL_NumJoysticks();
     if (num < 1)
@@ -266,6 +275,9 @@ void EmuInstance::openJoystick()
         {
             hasGyroscope = SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, SDL_TRUE) == 0;
         }
+
+        // WideMelon: on a Switch Pro controller, axes 1 and 3, and 2 and 4
+        WideMelon::FindStickTwins(controller, stickTwin);
     }
 }
 
@@ -284,6 +296,7 @@ void EmuInstance::closeJoystick()
         SDL_JoystickClose(joystick);
         joystick = nullptr;
     }
+    for (int& twin : stickTwin) twin = -1;
 }
 
 
@@ -397,7 +410,9 @@ bool EmuInstance::joystickButtonDown(int val)
     {
         int axisnum = (val >> 24) & 0xF;
         int axisdir = (val >> 20) & 0xF;
-        Sint16 axisval = SDL_JoystickGetAxis(joystick, axisnum);
+        // WideMelon: the same direction on the other stick counts too
+        Sint16 axisval = WideMelon::StickAxisValue(joystick, axisnum, axisdir,
+                                                   twinSticks, stickTwin, stickAxisBound);
 
         switch (axisdir)
         {
@@ -435,6 +450,11 @@ void EmuInstance::inputProcess()
     {
         openJoystick();
     }
+
+    // WideMelon: stick directions with a binding of their own (see joystickButtonDown)
+    memset(stickAxisBound, 0, sizeof(stickAxisBound));
+    for (int i = 0; i < 12; i++) WideMelon::MarkBoundStickAxis(joyMapping[i], stickAxisBound);
+    for (int i = 0; i < HK_MAX; i++) WideMelon::MarkBoundStickAxis(hkJoyMapping[i], stickAxisBound);
 
     joyInputMask = 0xFFF;
     if (joystick)

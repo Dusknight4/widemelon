@@ -107,6 +107,7 @@ DefaultList<bool> DefaultBools =
     {"3D.GL.CloseSeams", true},
     {"LimitFPS", true},
     {"Instance*.Window*.ShowOSD", true},
+    {"Instance*.JoystickTwinSticks", true},
     {"Emu.DirectBoot", true},
     {"Emu.ReduceSlowdown", true},
     {"Instance*.DS.Battery.LevelOkay", true},

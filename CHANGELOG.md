@@ -52,6 +52,15 @@
   about 0.5 ms of extra emulation time per frame. Not hardware-accurate; turn
   it off if a game misbehaves. Savestates load correctly whichever way this
   was set when they were made. Setting: `Emu.ReduceSlowdown`.
+- **Use either stick** (Config > Input and hotkeys, next to the joystick
+  picker, on by default). A joystick binding to a stick direction also works
+  with the same direction on the other analog stick, so on a Nintendo Switch
+  Pro controller Axis 1 and Axis 3 are interchangeable, and so are Axis 2 and
+  Axis 4: bind the D-pad to either stick and move with either one. Which axes
+  belong to which stick comes from the controller's SDL mapping, so it works
+  with controllers SDL recognizes (Switch Pro, Xbox, PlayStation, ...) and
+  leaves other controllers alone. A stick direction that has a binding of its
+  own isn't mirrored. Setting: `JoystickTwinSticks` (per instance).
 - **Single-file Windows build.** `widemelon.exe` can be built as one static
   executable of about 50 MB with MSYS2 UCRT64 and static Qt 6, with no DLLs
   or plugin folders next to it (see BUILD.md). It keeps its settings and

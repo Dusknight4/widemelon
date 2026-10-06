@@ -2319,6 +2319,16 @@
        </property>
       </widget>
      </item>
+     <item>
+      <widget class="QCheckBox" name="chkTwinSticks">
+       <property name="toolTip">
+        <string>A binding to a stick direction also works with the same direction on the other stick, for example Axis 1 and Axis 3 on a Switch Pro controller. A direction that has a binding of its own is left alone. Works with controllers SDL recognizes, such as Switch Pro, Xbox and PlayStation controllers.</string>
+       </property>
+       <property name="text">
+        <string>Use either stick</string>
+       </property>
+      </widget>
+     </item>
     </layout>
    </item>
    <item row="0" column="0">
@@ -2359,6 +2369,7 @@
   <tabstop>btnJoySelect</tabstop>
   <tabstop>btnJoyStart</tabstop>
   <tabstop>cbxJoystick</tabstop>
+  <tabstop>chkTwinSticks</tabstop>
  </tabstops>
  <resources>
   <include location="resources/ds.qrc"/>
