@@ -9,11 +9,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/pruefsumme/widemelon/actions/workflows/ci.yml"><img src="https://github.com/pruefsumme/widemelon/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <a href="https://github.com/pruefsumme/widemelon/releases/latest"><img src="https://img.shields.io/github/v/release/pruefsumme/widemelon?display_name=tag" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5b7fa3" alt="Windows, macOS, and Linux">
+  <a href="https://github.com/Dusknight4/widemelon/releases/latest"><img src="https://img.shields.io/github/v/release/Dusknight4/widemelon?display_name=tag" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-Windows-5b7fa3" alt="Windows">
+  <a href="https://github.com/pruefsumme/widemelon"><img src="https://img.shields.io/badge/based%20on-WideMelon%201.0.4-8a6fb3" alt="Based on WideMelon 1.0.4"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="GPL-3.0-or-later"></a>
 </p>
+
+> [!NOTE]
+> This is Dusknight4's fork of [WideMelon](https://github.com/pruefsumme/widemelon).
+> It adds motion smoothing, closes the black seams between terrain tiles,
+> removes in-game slowdown, and ships as a single Windows executable. See
+> [CHANGELOG.md](CHANGELOG.md) for everything that changed.
 
 WideMelon is a DS emulator built from melonDS that gives supported
 games a genuinely wider 3D view. It reveals more of the game world at the
@@ -30,6 +36,12 @@ scan the QR code and play from your phone's browser.
 
 ## Highlights
 
+- Motion smoothing: in-between frames make 30 fps games such as the Pokémon
+  overworlds play like 60 fps, and add extra frames on 120 Hz displays.
+- No more black lines between terrain tiles in the classic OpenGL renderer.
+- Reduce in-game slowdown: no more pauses and jumps while games load data,
+  for example when walking through towns in the Pokémon games.
+- One self-contained Windows `.exe`: nothing to install, no DLLs.
 - True widescreen 3D views from native 4:3 through 32:9.
 - Unstretched 2D interfaces, menus, sprites, videos, and touchscreen content.
 - Optional phone bottom screen, touch input, and customizable DS controls.
@@ -40,75 +52,16 @@ scan the QR code and play from your phone's browser.
 ## Download
 
 Download the latest build from the
-[WideMelon Releases page](https://github.com/pruefsumme/widemelon/releases/latest).
+[Releases page](https://github.com/Dusknight4/widemelon/releases/latest).
 
 | Platform | Download |
 | --- | --- |
-| Windows | Download the x64 `.exe` and open it. |
-| macOS | Download the Apple Silicon or Intel `.dmg`, then drag WideMelon to Applications. |
-| Linux | Install the x86_64 or ARM64 Debian package or AppImage, or choose an AUR package below. |
+| Windows | Download the x64 `.exe` and open it. It's a single file with nothing to install; WideMelon keeps its settings and saves in the folder you put it in. |
+| macOS and Linux | This fork doesn't publish builds for them. Build it from source (see [BUILD.md](BUILD.md)), or use [upstream WideMelon](https://github.com/pruefsumme/widemelon#download), which doesn't include this fork's changes. |
 
-Development builds from the newest commit are available from the
-[Release workflow](https://github.com/pruefsumme/widemelon/actions/workflows/release.yml).
-
-### Linux
-
-#### Ubuntu and Debian
-
-Download and install the current package:
-
-```sh
-VERSION=1.0.4
-case "$(dpkg --print-architecture)" in
-  amd64) ARCH=amd64 ;;
-  arm64) ARCH=arm64 ;;
-  *) echo "Unsupported architecture: $(dpkg --print-architecture)"; exit 1 ;;
-esac
-wget "https://github.com/pruefsumme/widemelon/releases/download/v${VERSION}/widemelon_${VERSION}-1_${ARCH}.deb"
-sudo apt install "./widemelon_${VERSION}-1_${ARCH}.deb"
-```
-
-WideMelon will appear in your application menu and can also be started with
-`widemelon`.
-
-#### AppImage
-
-The AppImage works on most x86_64 and ARM64 Linux distributions:
-
-```sh
-VERSION=1.0.4
-case "$(uname -m)" in
-  x86_64) ARCH=x86_64 ;;
-  aarch64|arm64) ARCH=aarch64 ;;
-  *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
-esac
-wget "https://github.com/pruefsumme/widemelon/releases/download/v${VERSION}/WideMelon-${VERSION}-${ARCH}.AppImage"
-chmod +x "WideMelon-${VERSION}-${ARCH}.AppImage"
-./"WideMelon-${VERSION}-${ARCH}.AppImage"
-```
-
-#### Arch Linux and AUR
-
-On Arch Linux x86_64, choose one package. All three install the same `widemelon`
-command and desktop entry, so they cannot be installed together.
-
-Stable release, built locally:
-
-```sh
-yay -S widemelon
-```
-
-Stable release, prebuilt binary:
-
-```sh
-yay -S widemelon-bin
-```
-
-Newest development revision from `main`:
-
-```sh
-yay -S widemelon-git
-```
+The `.exe` isn't code-signed, so Windows SmartScreen may warn the first time
+you open it: choose **More info > Run anyway**. Each release lists SHA-256
+checksums of its files in `SHA256SUMS`.
 
 ## Quick start
 
