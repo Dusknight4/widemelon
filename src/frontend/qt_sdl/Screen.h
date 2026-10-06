@@ -19,6 +19,8 @@
 #ifndef SCREEN_H
 #define SCREEN_H
 
+#include <atomic>
+#include <chrono>
 #include <optional>
 #include <deque>
 #include <map>
@@ -99,6 +101,18 @@ protected:
     float screenMatrix[kMaxScreenTransforms][6];
     int screenKind[kMaxScreenTransforms];
     int numScreens;
+
+    // WideMelon: the Overlay layout during Pokémon battles, which the screens
+    // slide to and from while the emulator signals a battle (battleBlend runs
+    // from 0 to 1 on the thread that draws)
+    ScreenLayout battleLayout;
+    float battleMatrix[kMaxScreenTransforms][6];
+    bool hasBattleLayout = false;
+    float battleBlend = 0.f;
+    std::chrono::steady_clock::time_point battleBlendTime;
+    std::atomic<bool> battleTouch {false};
+    ScreenLayout& touchLayout() { return (battleTouch && hasBattleLayout) ? battleLayout : layout; }
+    void blendedScreenMatrices(float out[kMaxScreenTransforms][6]);
 
     bool touching = false;
 

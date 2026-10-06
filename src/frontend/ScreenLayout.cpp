@@ -127,13 +127,18 @@ ScreenLayout::ScreenLayout()
 // stretching; a widened top screen then reaches past the 256-pixel picture a
 // DS shows, and the corner screen goes in that extra strip so it doesn't cover
 // any of that picture. Rotation isn't applied in this layout.
+//
+// In a Pokémon battle the widened view is mostly black, so the DS picture moves
+// to the left edge of the display; that doubles the strip on the right, and the
+// touchscreen doubles in width and height to fill it.
 void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly,
     bool integerScale, bool swapScreens,
-    float topAspect, float botAspect)
+    float topAspect, float botAspect, bool battle)
 {
     // with only the top screen shown (the phone has the bottom one), it fills the display
     if (mainOnly)
         swapScreens = false;
+    battle = battle && !mainOnly && !swapScreens;
 
     HybEnable = false;
     OverlayEnable = true;
@@ -154,7 +159,8 @@ void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly
     const float mainHeight = 192.f * scale;
     M23_Identity(mainMtx);
     M23_Scale(mainMtx, mainAspect * scale, scale);
-    M23_Translate(mainMtx, (screenWidth - mainWidth) / 2, (screenHeight - mainHeight) / 2);
+    const float mainX = battle ? -(mainWidth - 256.f * scale) / 2 : (screenWidth - mainWidth) / 2;
+    M23_Translate(mainMtx, mainX, (screenHeight - mainHeight) / 2);
 
     // the corner screen fills the strip between the DS picture and the right
     // edge of the display, at most half the display's height tall
@@ -163,6 +169,11 @@ void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly
     sideScale = std::min(sideScale, (screenHeight / 2.f) / 192.f);
     // too narrow to be usable (a display close to 4:3): accept some overlap
     sideScale = std::max(sideScale, (screenHeight / 10.f) / 192.f);
+    if (battle)
+    {
+        // twice as wide and tall, within the strip right of the DS picture
+        sideScale = std::min({2.f * sideScale, (screenWidth - 256.f * scale) / sideUnitWidth, screenHeight / 192.f});
+    }
     const float sideWidth = sideUnitWidth * sideScale;
 
     M23_Identity(sideMtx);
@@ -188,7 +199,8 @@ void ScreenLayout::Setup(int screenWidth, int screenHeight,
     int screenGap,
     bool integerScale,
     bool swapScreens,
-    float topAspect, float botAspect)
+    float topAspect, float botAspect,
+    bool battle)
 {
     OverlayEnable = false;
     OverlaySwap = false;
@@ -197,7 +209,7 @@ void ScreenLayout::Setup(int screenWidth, int screenHeight,
         if (sizing != screenSizing_BotOnly)
         {
             SetupOverlay(screenWidth, screenHeight, sizing == screenSizing_TopOnly,
-                         integerScale, swapScreens, topAspect, botAspect);
+                         integerScale, swapScreens, topAspect, botAspect, battle);
             return;
         }
         screenLayout = screenLayout_Natural;

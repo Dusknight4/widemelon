@@ -64,6 +64,16 @@
   touchscreen in the middle and the top screen in the corner, and with a
   phone connected only the top screen is shown. The touchscreen is smaller
   than in the side-by-side layout on screens narrower than 16:9.
+- **Bigger touchscreen in Pokémon battles** (Overlay layout, on by default;
+  WideMelon settings). During a battle in Pokémon Platinum the top screen
+  slides so the DS picture starts at the left edge, and the touchscreen
+  doubles in width and height in the space that frees up, still without
+  covering the DS picture. Battles are detected from the game's battle
+  engine (ARM9 overlay 16) being in memory: it loads while the screen is
+  black between the encounter effect and the battle intro, and goes when
+  the overworld code comes back during the fade out, so the layout slides
+  over (in about a third of a second) while both screens are black.
+  Setting: `WideMelon.BattleLayout`.
 - **Use either stick** (Config > Input and hotkeys, next to the joystick
   picker, on by default). A joystick binding to a stick direction also works
   with the same direction on the other analog stick, so on a Nintendo Switch

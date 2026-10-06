@@ -236,6 +236,11 @@ public:
                                  "bottom screen sits in the top-right corner, beside the area a DS would show.");
         videoLayout->addRow("Screen layout", screenLayout);
 
+        battleLayout = new QCheckBox("Bigger touchscreen in Pokémon battles");
+        battleLayout->setToolTip("Overlay layout, Pokémon Platinum: during battles the top screen moves to the "
+                                 "left edge and the touchscreen doubles in size beside it.");
+        videoLayout->addRow(QString(), battleLayout);
+
         summary = new QLabel;
         summary->setWordWrap(true);
         videoLayout->addRow(QString(), summary);
@@ -268,6 +273,7 @@ public:
         integerScaling->setChecked(global.GetBool("WideMelon.IntegerScaling"));
         const int layoutIndex = screenLayout->findData(savedScreenLayout());
         screenLayout->setCurrentIndex(layoutIndex >= 0 ? layoutIndex : 1);
+        battleLayout->setChecked(global.GetBool("WideMelon.BattleLayout"));
         fullscreen->setChecked(global.GetBool("WideMelon.Fullscreen"));
         connect(screenLayout, qOverload<int>(&QComboBox::currentIndexChanged), this,
                 [this] { updateSummary(); });
@@ -306,6 +312,7 @@ public:
 
         auto global = Config::GetGlobalTable();
         global.SetInt("WideMelon.ScreenLayout", screenLayout->currentData().toInt());
+        global.SetBool("WideMelon.BattleLayout", battleLayout->isChecked());
         applyProfile(viewWidth, scale->currentData().toInt(), outputWidth, outputHeight,
                      integerScaling->isChecked(), fullscreen->isChecked());
         global.SetInt("WideMelon.Resolution", resolutionIndex);
@@ -388,6 +395,7 @@ private:
     QComboBox* scale;
     QCheckBox* integerScaling;
     QComboBox* screenLayout;
+    QCheckBox* battleLayout;
     QCheckBox* fullscreen;
     QPointer<PhoneScreenDialog> phoneDialog;
 };

@@ -110,6 +110,7 @@ DefaultList<bool> DefaultBools =
     {"LimitFPS", true},
     {"Instance*.Window*.ShowOSD", true},
     {"Instance*.JoystickTwinSticks", true},
+    {"WideMelon.BattleLayout", true},
     {"Emu.DirectBoot", true},
     {"Emu.ReduceSlowdown", true},
     {"Instance*.DS.Battery.LevelOkay", true},

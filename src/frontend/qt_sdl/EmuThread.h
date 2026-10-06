@@ -34,6 +34,7 @@
 #include "NDSCart.h"
 #include "GBACart.h"
 #include "PresentPacer.h"
+#include "BattleDetector.h"
 
 namespace melonDS
 {
@@ -167,6 +168,7 @@ private:
     void updateRenderer();
     void compileShaders();
     void presentFrame(bool smooth, double emuMs = 0.0, double periodMs = 0.0);
+    void updateBattleState();
 
     enum EmuStatusKind
     {
@@ -207,6 +209,10 @@ private:
     bool vsyncEnabled = false;
     WideMelon::PresentPacer presentPacer;
     double lastFrameStart = 0.0;
+    WideMelon::BattleDetector battleDetector;
+    const void* battleCart = nullptr;
+    const void* battleROM = nullptr;
+    bool battleLayoutEnabled = true;
 };
 
 #endif // EMUTHREAD_H

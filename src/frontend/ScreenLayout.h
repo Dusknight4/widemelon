@@ -66,6 +66,8 @@ public:
     // * integerScale: force screens to be scaled up at integer scaling factors
     // * screenSwap: whether to swap the position of both screens
     // * topAspect/botAspect: ratio by which to scale the top and bottom screen respectively
+    // * battle: WideMelon, Overlay layout during a Pokémon battle: the DS picture
+    //   moves to the left edge and the touchscreen beside it doubles in size
     void Setup(int screenWidth, int screenHeight,
                ScreenLayoutType screenLayout,
                ScreenRotation rotation,
@@ -73,7 +75,8 @@ public:
                int screenGap,
                bool integerScale,
                bool swapScreens,
-               float topAspect, float botAspect);
+               float topAspect, float botAspect,
+               bool battle = false);
 
     // get a 2x3 transform matrix for each screen and whether it's a top or bottom screen
     // note: the transform assumes an origin point at the top left of the display,
@@ -92,7 +95,7 @@ public:
 private:
     void SetupOverlay(int screenWidth, int screenHeight, bool mainOnly,
                       bool integerScale, bool swapScreens,
-                      float topAspect, float botAspect);
+                      float topAspect, float botAspect, bool battle);
 
     bool OverlayEnable;
     bool OverlaySwap; // the bottom screen fills the display and the top screen sits in the corner

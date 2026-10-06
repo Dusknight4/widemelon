@@ -250,6 +250,7 @@ void EmuThread::run()
                 updateRenderer();
                 motionSmoothing = globalCfg.GetBool("Screen.MotionSmoothing");
                 vsyncEnabled = globalCfg.GetBool("Screen.VSync");
+                battleLayoutEnabled = globalCfg.GetBool("WideMelon.BattleLayout");
 
                 videoSettingsDirty = false;
                 emuInstance->renderLock.unlock();
@@ -320,6 +321,7 @@ void EmuThread::run()
                 nlines = emuInstance->nds->RunFrame();
             }
             const double emuMs = (SDL_GetPerformanceCounter() * perfCountsSec - frameStart) * 1000.0;
+            updateBattleState();
             const double periodMs = (lastFrameStart > 0.0) ? (frameStart - lastFrameStart) * 1000.0 : 0.0;
             lastFrameStart = frameStart;
 
@@ -911,6 +913,22 @@ void EmuThread::updateRenderer()
     };
 
     nds->GetRenderer().SetRenderSettings(settings);
+}
+
+void EmuThread::updateBattleState()
+{
+    // WideMelon: Pokémon battles get a bigger touchscreen in the Overlay layout
+    auto nds = emuInstance->nds;
+    const NDSCart::CartCommon* cart = nds->GetNDSCart();
+    const void* rom = cart ? cart->GetROM() : nullptr;
+    if (cart != battleCart || rom != battleROM)
+    {
+        battleCart = cart;
+        battleROM = rom;
+        battleDetector.Init(cart ? cart->GetROM() : nullptr, cart ? cart->GetROMLength() : 0);
+    }
+    emuInstance->battleLayoutActive = battleLayoutEnabled
+        && battleDetector.InBattle(nds->MainRAM, nds->MainRAMMask);
 }
 
 void EmuThread::presentFrame(bool smooth, double emuMs, double periodMs)

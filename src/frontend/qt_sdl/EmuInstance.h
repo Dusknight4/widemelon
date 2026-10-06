@@ -320,6 +320,8 @@ public:
     int vsyncIntervalScale = 1;
     // refresh rate of the screen showing the main window, from the GUI thread
     std::atomic<double> displayRefreshRate {60.0};
+    // WideMelon: a Pokémon battle is running and the battle layout is enabled (see BattleDetector)
+    std::atomic<bool> battleLayoutActive {false};
 private:
 
     std::unique_ptr<melonDS::Savestate> backupState;

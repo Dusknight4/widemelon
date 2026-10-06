@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include <optional>
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 
@@ -202,7 +203,47 @@ void ScreenPanel::setupScreenLayout()
 
     numScreens = layout.GetScreenTransforms(screenMatrix[0], screenKind);
 
+    // WideMelon: the same layout as it looks in a Pokémon battle
+    hasBattleLayout = false;
+    if (screenLayout == screenLayout_Overlay)
+    {
+        battleLayout.Setup(w, h,
+                    static_cast<ScreenLayoutType>(screenLayout),
+                    static_cast<ScreenRotation>(screenRotation),
+                    static_cast<ScreenSizing>(sizing),
+                    screenGap,
+                    integerScaling != 0,
+                    screenSwap != 0,
+                    aspectTop,
+                    aspectBot,
+                    true);
+        int battleKind[kMaxScreenTransforms];
+        const int n = battleLayout.GetScreenTransforms(battleMatrix[0], battleKind);
+        hasBattleLayout = (n == numScreens) && std::equal(battleKind, battleKind + n, screenKind);
+    }
+
     calcSplashLayout();
+}
+
+void ScreenPanel::blendedScreenMatrices(float out[kMaxScreenTransforms][6])
+{
+    // WideMelon: slide to the battle layout and back in about a third of a second
+    constexpr double kBlendSeconds = 0.35;
+    const auto now = std::chrono::steady_clock::now();
+    const double dt = std::clamp(std::chrono::duration<double>(now - battleBlendTime).count(), 0.0, 0.1);
+    battleBlendTime = now;
+
+    const bool target = hasBattleLayout && emuInstance->battleLayoutActive;
+    const float step = static_cast<float>(dt / kBlendSeconds);
+    battleBlend = target ? std::min(1.f, battleBlend + step) : std::max(0.f, battleBlend - step);
+    battleTouch = battleBlend > 0.5f;
+
+    const float t = battleBlend * battleBlend * (3.f - 2.f * battleBlend); // ease in and out
+    for (int i = 0; i < numScreens; i++)
+        for (int k = 0; k < 6; k++)
+            out[i][k] = hasBattleLayout
+                ? screenMatrix[i][k] + (battleMatrix[i][k] - screenMatrix[i][k]) * t
+                : screenMatrix[i][k];
 }
 
 int ScreenPanel::effectiveScreenSizing() const
@@ -292,7 +333,7 @@ void ScreenPanel::mousePressEvent(QMouseEvent* event)
     int x = event->pos().x();
     int y = event->pos().y();
 
-    if (layout.GetTouchCoords(x, y, false))
+    if (touchLayout().GetTouchCoords(x, y, false))
     {
         touching = true;
         emuInstance->touchScreen(x, y);
@@ -325,7 +366,7 @@ void ScreenPanel::mouseMoveEvent(QMouseEvent* event)
     int x = event->pos().x();
     int y = event->pos().y();
 
-    if (layout.GetTouchCoords(x, y, true))
+    if (touchLayout().GetTouchCoords(x, y, true))
     {
         emuInstance->touchScreen(x, y);
     }
@@ -349,7 +390,7 @@ void ScreenPanel::tabletEvent(QTabletEvent* event)
             int y = event->y();
 #endif
 
-            if (layout.GetTouchCoords(x, y, event->type()==QEvent::TabletMove))
+            if (touchLayout().GetTouchCoords(x, y, event->type()==QEvent::TabletMove))
             {
                 touching = true;
                 emuInstance->touchScreen(x, y);
@@ -394,7 +435,7 @@ void ScreenPanel::touchEvent(QTouchEvent* event)
             int x = (int)lastPosition.x();
             int y = (int)lastPosition.y();
 
-            if (layout.GetTouchCoords(x, y, event->type()==QEvent::TouchUpdate))
+            if (touchLayout().GetTouchCoords(x, y, event->type()==QEvent::TouchUpdate))
             {
                 touching = true;
                 emuInstance->touchScreen(x, y);
@@ -1255,9 +1296,11 @@ void ScreenPanelGL::drawScreen()
         glBindBuffer(GL_ARRAY_BUFFER, screenVertexBuffer);
         glBindVertexArray(screenVertexArray);
 
+        float matrices[kMaxScreenTransforms][6];
+        blendedScreenMatrices(matrices);
         for (int i = 0; i < numScreens; i++)
         {
-            glUniformMatrix2x3fv(screenShaderTransformULoc, 1, GL_TRUE, screenMatrix[i]);
+            glUniformMatrix2x3fv(screenShaderTransformULoc, 1, GL_TRUE, matrices[i]);
             glDrawArrays(GL_TRIANGLES, screenKind[i] == 0 ? 0 : 2 * 3, 2 * 3);
         }
 
