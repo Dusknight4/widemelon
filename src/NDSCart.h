@@ -142,6 +142,9 @@ public:
 
     void RaiseCardIRQ();
 
+    // WideMelon: see NDS::SetFastCartTransfers
+    bool FastTransfers = false;
+
 private:
     friend class CartCommon;
     melonDS::NDS& NDS;
@@ -178,6 +181,7 @@ private:
         void ROMSendData(u32 param);
         void ROMAdvanceSend();
         void ROMEndTransfer(u32 param);
+        u32 TransferCycle() const;
         void RaiseDRQ();
         void CheckDMA();
 

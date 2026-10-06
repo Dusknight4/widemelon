@@ -7,6 +7,9 @@ set(SOURCES_QT_SDL
     main.cpp
     main_shaders.h
     Screen.cpp
+    FrameInterpolator.h
+    FrameInterpolator.cpp
+    PresentPacer.h
     Window.cpp
     EmuInstance.cpp
     EmuInstanceAudio.cpp
@@ -192,6 +195,13 @@ if (BUILD_STATIC)
     qt_import_plugins(melonDS INCLUDE Qt::QSvgPlugin Qt::QJpegPlugin)
     if (WIN32 AND USE_QT6)
         qt_import_plugins(melonDS INCLUDE Qt::QModernWindowsStylePlugin)
+    endif()
+    if (MINGW AND USE_QT6)
+        # MSYS2's static Qt would also pull in image formats WideMelon doesn't
+        # use (TIFF, WebP, ...) together with their libraries
+        qt_import_plugins(melonDS INCLUDE_BY_TYPE imageformats
+            Qt::QJpegPlugin Qt::QSvgPlugin Qt::QGifPlugin Qt::QICOPlugin)
+        target_sources(melonDS PRIVATE mingw_static_zlib.c)
     endif()
     if (USE_VCPKG AND UNIX AND NOT APPLE)
         pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)

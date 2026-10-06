@@ -828,6 +828,10 @@ struct RendererSettings
 
     // "improved polygon splitting" (regular OpenGL renderer)
     bool BetterPolygons;
+
+    // WideMelon: widen opaque polygons by one pixel so neighbouring
+    // polygons overlap instead of leaving background-coloured seams
+    bool CloseSeams = false;
 };
 
 class Renderer

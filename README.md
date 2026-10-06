@@ -173,8 +173,56 @@ scale; native 2D layers are composited over the middle without stretching.
 Results depend on how each game draws its scene. Some games expose a great deal
 of additional world detail, while others may cull objects outside the original
 view. Menus, battles, videos, and special effects can remain 4:3 by design. The
-expanded profiles require the classic OpenGL renderer; native 4:3 remains
-available as the compatibility profile.
+expanded profiles require an OpenGL renderer; native 4:3 remains available as
+the compatibility profile.
+
+The classic OpenGL renderer closes the thin black lines and dots that can
+appear between terrain tiles, for example in the Pokémon games. Turn off
+**Close gaps between polygons** in **Config > Video settings** to compare with
+upstream melonDS. The same dialog also offers **OpenGL (Compute shader)**, which
+reproduces the DS rasterizer on the GPU and needs OpenGL 4.3.
+
+## Motion smoothing
+
+**Config > Video settings > Motion smoothing** generates in-between frames,
+like the motion smoothing on TVs. WideMelon estimates how each part of the
+picture moved between two real frames and draws the frames in between along
+that motion; menus and text that stay still stay sharp. Repeating textures
+such as tall grass follow the camera's motion instead of jumping to a
+look-alike position one pattern repeat away.
+
+When the picture changes rather than moves (a fade, a new scene, a menu, text
+box or submenu opening or closing), WideMelon shows the real frames there
+instead of in-between frames. It detects this on the GPU from the share of the
+picture that has no good match. While the camera is still, a smaller share
+is enough, so a submenu popping up is caught while a walking character or an
+animated icon is still smoothed.
+
+- 30 fps games, such as the Pokémon overworlds, play like 60 fps on a 60 Hz
+  display.
+- On a 120 Hz or faster display, every game gets extra frames when emulation is
+  fast enough (for example with the JIT recompiler). Otherwise WideMelon shows
+  one frame per emulated frame, held for two refreshes, so the game keeps full
+  speed. Set the refresh rate in your operating system's display settings.
+- The next real frame has to exist before the frames leading up to it can be
+  drawn, so this adds a short delay: about one frame for 30 fps games at 60 Hz
+  and half a frame for 60 fps games at 120 Hz.
+- It needs the OpenGL display and pauses during fast-forward and slow motion.
+  The phone screen keeps receiving the real frames.
+- With VSync on, each emulated frame has to fit in one refresh (16.7 ms at
+  60 Hz). If you see stutter, enable **Config > Emu settings > CPU emulation >
+  Enable JIT recompiler**; the interpreter is several times slower.
+
+## Reduce in-game slowdown
+
+Some games occasionally take longer than usual to draw a frame, for example
+the Pokémon games while loading map data as you walk through a town. The
+picture then pauses briefly and jumps, even though the emulator itself keeps
+running at full speed. **Config > Emu settings > Reduce in-game slowdown** (on
+by default) runs the DS's main CPU at twice its speed, as a DSi can, and reads
+the game card faster, so these frames arrive on time. This is not
+hardware-accurate; turn it off if a game misbehaves. Savestates work across
+both settings.
 
 > [!CAUTION]
 > **Compatibility note:** Widescreen support is game-dependent. It may not work correctly or provide much benefit in every game, because results depend on how that game renders its 3D scene.

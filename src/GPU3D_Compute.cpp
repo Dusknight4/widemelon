@@ -16,6 +16,7 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
+#include "WideMelon.h"
 #include "GPU_OpenGL.h"
 
 #include <assert.h>
@@ -52,6 +53,8 @@ bool ComputeRenderer3D::CompileShader(GLuint& shader, const std::string& source,
     }
     shaderSource += "#define ScreenWidth ";
     shaderSource += std::to_string(ScreenWidth);
+    shaderSource += "\n#define OutputWidth ";
+    shaderSource += std::to_string(OutputWidth);
     shaderSource += "\n#define ScreenHeight ";
     shaderSource += std::to_string(ScreenHeight);
     shaderSource += "\n#define MaxWorkTiles ";
@@ -331,8 +334,10 @@ void ComputeRenderer3D::SetRenderSettings(int scale, bool highResolutionCoordina
 
     ShaderStepIdx = 0;
 
-    ScaleFactor = scale;
-    ScreenWidth = 256 * ScaleFactor;
+    // span slopes use 18 fractional bits in 32-bit integers, so keep
+    // the widest expanded view below 8192 pixels
+    ScaleFactor = std::clamp(scale, 1, std::max(1, 8191 / WideMelon::Width()));
+    OutputWidth = WideMelon::Width() * ScaleFactor;
     ScreenHeight = 192 * ScaleFactor;
 
     //Starting at 4.5x we want to double TileSize every time scale doubles
@@ -350,6 +355,10 @@ void ComputeRenderer3D::SetRenderSettings(int scale, bool highResolutionCoordina
     CoarseTileArea = CoarseTileCountX * CoarseTileCountY;
     CoarseTileW = CoarseTileCountX * TileSize;
     CoarseTileH = CoarseTileCountY * TileSize;
+
+    // binning works on whole coarse tiles, so an expanded view whose width
+    // isn't a multiple of them gets padding columns that are never shown
+    ScreenWidth = ((OutputWidth + CoarseTileW - 1) / CoarseTileW) * CoarseTileW;
 
     TilesPerLine = ScreenWidth/TileSize;
     TileLines = ScreenHeight/TileSize;
@@ -381,7 +390,7 @@ void ComputeRenderer3D::SetRenderSettings(int scale, bool highResolutionCoordina
         glDeleteTextures(1, &Framebuffer);
     glGenTextures(1, &Framebuffer);
     glBindTexture(GL_TEXTURE_2D, Framebuffer);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, ScreenWidth, ScreenHeight);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, OutputWidth, ScreenHeight);
 
     Parent.OutputTex3D = Framebuffer;
 
@@ -856,6 +865,14 @@ void ComputeRenderer3D::RenderFrame()
                 scaledPositions[i][0] = polygon->Vertices[i]->FinalPosition[0] * ScaleFactor;
                 scaledPositions[i][1] = polygon->Vertices[i]->FinalPosition[1] * ScaleFactor;
             }
+            if (WideMelon::Enabled())
+            {
+                // DS screen X 0..256 spans the whole expanded view
+                s64 x = HiresCoordinates
+                    ? (s64)polygon->Vertices[i]->HiresPosition[0]
+                    : (s64)polygon->Vertices[i]->FinalPosition[0] << 4;
+                scaledPositions[i][0] = (s32)((x * ScaleFactor * WideMelon::Width()) / (16 * 256));
+            }
             ytop = std::min(scaledPositions[i][1], ytop);
             ybot = std::max(scaledPositions[i][1], ybot);
         }
@@ -1057,7 +1074,7 @@ void ComputeRenderer3D::RenderFrame()
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, MetaUniformMemory);
 
     glUseProgram(ShaderClearCoarseBinMask);
-    glDispatchCompute(TilesPerLine*TileLines/ClearCoarseBinMaskLocalSize, 1, 1);
+    glDispatchCompute((TilesPerLine*TileLines + ClearCoarseBinMaskLocalSize - 1)/ClearCoarseBinMaskLocalSize, 1, 1);
 
     bool wbuffer = false;
     if (numYSpans > 0)

@@ -276,6 +276,7 @@ public: // TODO: Encapsulate the rest of these members
     u64 ARM9Timestamp, ARM9Target;
     u64 ARM7Timestamp, ARM7Target;
     u32 ARM9ClockShift;
+    bool ARM9Overclock = false; // WideMelon, see SetARM9Overclock()
 
     u32 IME[2];
     u32 IE[2];
@@ -490,6 +491,13 @@ public: // TODO: Encapsulate the rest of these members
     virtual void ARM7IOWrite8(u32 addr, u8 val);
     virtual void ARM7IOWrite16(u32 addr, u16 val);
     virtual void ARM7IOWrite32(u32 addr, u32 val);
+
+    // WideMelon: give games more time per frame than a real DS has, so they
+    // don't drop frames (lag) while streaming data. Neither is hardware-accurate.
+    // Runs the ARM9 at twice the DS clock (133 MHz), as a DSi can.
+    void SetARM9Overclock(bool enable) noexcept;
+    // Reads the game card at one bus cycle per byte instead of five or eight.
+    void SetFastCartTransfers(bool enable) noexcept;
 
 #ifdef JIT_ENABLED
     [[nodiscard]] bool IsJITEnabled() const noexcept { return EnableJIT; }

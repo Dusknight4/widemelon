@@ -104,9 +104,11 @@ DefaultList<bool> DefaultBools =
     {"Screen.Filter", true},
     {"3D.Soft.Threaded", true},
     {"3D.GL.HiresCoordinates", true},
+    {"3D.GL.CloseSeams", true},
     {"LimitFPS", true},
     {"Instance*.Window*.ShowOSD", true},
     {"Emu.DirectBoot", true},
+    {"Emu.ReduceSlowdown", true},
     {"Instance*.DS.Battery.LevelOkay", true},
     {"Instance*.DSi.Battery.Charging", true},
 #ifdef JIT_ENABLED

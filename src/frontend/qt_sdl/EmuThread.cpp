@@ -248,6 +248,8 @@ void EmuThread::run()
                 }
 
                 updateRenderer();
+                motionSmoothing = globalCfg.GetBool("Screen.MotionSmoothing");
+                vsyncEnabled = globalCfg.GetBool("Screen.VSync");
 
                 videoSettingsDirty = false;
                 emuInstance->renderLock.unlock();
@@ -307,6 +309,7 @@ void EmuThread::run()
 
             // emulate
             u32 nlines;
+            const double frameStart = SDL_GetPerformanceCounter() * perfCountsSec;
             if (emuInstance->nds->GPU.GetRenderer().NeedsShaderCompile())
             {
                 compileShaders();
@@ -316,6 +319,9 @@ void EmuThread::run()
             {
                 nlines = emuInstance->nds->RunFrame();
             }
+            const double emuMs = (SDL_GetPerformanceCounter() * perfCountsSec - frameStart) * 1000.0;
+            const double periodMs = (lastFrameStart > 0.0) ? (frameStart - lastFrameStart) * 1000.0 : 0.0;
+            lastFrameStart = frameStart;
 
             if (emuInstance->ndsSave)
                 emuInstance->ndsSave->CheckFlush();
@@ -326,7 +332,8 @@ void EmuThread::run()
             if (emuInstance->firmwareSave)
                 emuInstance->firmwareSave->CheckFlush();
 
-            emuInstance->drawScreen();
+            presentFrame(motionSmoothing && useOpenGL && emuInstance->doLimitFPS && !fastforward && !slowmo,
+                         emuMs, periodMs);
 
 #ifdef MELONCAP
             MelonCap::Update();
@@ -435,6 +442,7 @@ void EmuThread::run()
         {
             // paused
             nframes = 0;
+            lastFrameStart = 0.0;
             lastTime = SDL_GetPerformanceCounter() * perfCountsSec;
             lastMeasureTime = lastTime;
 
@@ -445,7 +453,7 @@ void EmuThread::run()
 
             SDL_Delay(75);
 
-            emuInstance->drawScreen();
+            presentFrame(false);
         }
 
         handleMessages();
@@ -865,7 +873,14 @@ void EmuThread::updateRenderer()
 {
     auto nds = emuInstance->nds;
 
-    if (WideMelon::Enabled())
+    // the expanded viewport needs one of the OpenGL renderers,
+    // and the compute renderer additionally needs OpenGL 4.3
+    if (WideMelon::Enabled() && videoRenderer == renderer3D_OpenGLCompute && !GLAD_GL_VERSION_4_3)
+    {
+        emuInstance->osdAddMessage(0xFFA0A0, "Compute renderer needs OpenGL 4.3, using classic OpenGL");
+        videoRenderer = renderer3D_OpenGL;
+    }
+    else if (WideMelon::Enabled() && videoRenderer != renderer3D_OpenGLCompute)
         videoRenderer = renderer3D_OpenGL;
 
     if (videoRenderer != lastVideoRenderer)
@@ -891,10 +906,56 @@ void EmuThread::updateRenderer()
         .ScaleFactor = cfg.GetInt("3D.GL.ScaleFactor"),
         .Threaded = cfg.GetBool("3D.Soft.Threaded"),
         .HiresCoordinates = cfg.GetBool("3D.GL.HiresCoordinates"),
-        .BetterPolygons = cfg.GetBool("3D.GL.BetterPolygons")
+        .BetterPolygons = cfg.GetBool("3D.GL.BetterPolygons"),
+        .CloseSeams = cfg.GetBool("3D.GL.CloseSeams")
     };
 
     nds->GetRenderer().SetRenderSettings(settings);
+}
+
+void EmuThread::presentFrame(bool smooth, double emuMs, double periodMs)
+{
+    // with motion smoothing, a display faster than the DS gets extra generated
+    // frames: two per emulated frame at 120 Hz, and so on, as long as the
+    // emulation keeps up with that (see PresentPacer)
+    int subframes = 1;
+    if (smooth && emuInstance->targetFPS > 0.0)
+    {
+        const double refresh = emuInstance->displayRefreshRate.load();
+        const int ratio = std::clamp((int)std::lround(refresh / emuInstance->targetFPS), 1, 4);
+        const double frameMs = 1000.0 / emuInstance->targetFPS;
+        subframes = presentPacer.Update(ratio, emuMs, (periodMs > 0.0) ? periodMs : frameMs, frameMs, 1000.0 / refresh);
+
+        // with fewer presents, each one stays up for the refreshes of the others
+        const int scale = ratio / subframes;
+        if (vsyncEnabled && scale != emuInstance->vsyncIntervalScale)
+            emuInstance->setVSyncGL(true, scale);
+    }
+    else if (vsyncEnabled && emuInstance->vsyncIntervalScale != 1)
+        emuInstance->setVSyncGL(true);   // fast-forward and slow motion already reset it
+
+    emuInstance->presentSmoothed = smooth;
+    emuInstance->presentSubframes = subframes;
+
+    // spread them evenly over the frame; with vsync, each swap waits for the display instead
+    const double countsSec = 1.0 / SDL_GetPerformanceFrequency();
+    const double start = SDL_GetPerformanceCounter() * countsSec;
+    for (int i = 0; i < subframes; i++)
+    {
+        if (i > 0 && !vsyncEnabled)
+        {
+            const double target = start + i / (emuInstance->targetFPS * subframes);
+            for (;;)
+            {
+                const double remaining = target - SDL_GetPerformanceCounter() * countsSec;
+                if (remaining <= 0.0) break;
+                if (remaining > 0.002) SDL_Delay((Uint32)((remaining - 0.001) * 1000.0));
+            }
+        }
+
+        emuInstance->presentPhase = (double)i / subframes;
+        emuInstance->drawScreen();
+    }
 }
 
 void EmuThread::compileShaders()

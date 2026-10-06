@@ -48,6 +48,7 @@ void VideoSettingsDialog::setEnabled()
     ui->cbSoftwareThreaded->setEnabled(softwareRenderer);
     ui->cbxGLResolution->setEnabled(!softwareRenderer);
     ui->cbBetterPolygons->setEnabled(renderer == renderer3D_OpenGL);
+    ui->cbCloseSeams->setEnabled(renderer == renderer3D_OpenGL);
     ui->cbxComputeHiResCoords->setEnabled(renderer == renderer3D_OpenGLCompute);
 }
 
@@ -66,6 +67,8 @@ VideoSettingsDialog::VideoSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     oldSoftThreaded = cfg.GetBool("3D.Soft.Threaded");
     oldGLScale = cfg.GetInt("3D.GL.ScaleFactor");
     oldGLBetterPolygons = cfg.GetBool("3D.GL.BetterPolygons");
+    oldGLCloseSeams = cfg.GetBool("3D.GL.CloseSeams");
+    oldMotionSmoothing = cfg.GetBool("Screen.MotionSmoothing");
     oldHiresCoordinates = cfg.GetBool("3D.GL.HiresCoordinates");
 
     grp3DRenderer = new QButtonGroup(this);
@@ -82,8 +85,9 @@ VideoSettingsDialog::VideoSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     if (WideMelon::Enabled())
     {
         ui->rb3DSoftware->setEnabled(false);
-        ui->rb3DCompute->setEnabled(false);
-        ui->rb3DOpenGL->setToolTip("The expanded WideMelon viewport requires the classic OpenGL renderer.");
+        ui->rb3DSoftware->setToolTip("The expanded WideMelon viewport requires an OpenGL renderer.");
+        ui->rb3DCompute->setToolTip("Reproduces the DS rasterizer on the GPU for more accurate graphics. "
+                                    "Requires OpenGL 4.3.");
     }
 
 #ifndef OGLRENDERER_ENABLED
@@ -106,6 +110,8 @@ VideoSettingsDialog::VideoSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     ui->cbxGLResolution->setCurrentIndex(oldGLScale-1);
 
     ui->cbBetterPolygons->setChecked(oldGLBetterPolygons != 0);
+    ui->cbCloseSeams->setChecked(oldGLCloseSeams != 0);
+    ui->cbMotionSmoothing->setChecked(oldMotionSmoothing != 0);
     ui->cbxComputeHiResCoords->setChecked(oldHiresCoordinates != 0);
 
     if (!oldVSync)
@@ -145,6 +151,8 @@ void VideoSettingsDialog::on_VideoSettingsDialog_rejected()
     cfg.SetBool("3D.Soft.Threaded", oldSoftThreaded);
     cfg.SetInt("3D.GL.ScaleFactor", oldGLScale);
     cfg.SetBool("3D.GL.BetterPolygons", oldGLBetterPolygons);
+    cfg.SetBool("3D.GL.CloseSeams", oldGLCloseSeams);
+    cfg.SetBool("Screen.MotionSmoothing", oldMotionSmoothing);
     cfg.SetBool("3D.GL.HiresCoordinates", oldHiresCoordinates);
 
     emit updateVideoSettings(old_gl != UsesGL());
@@ -156,6 +164,7 @@ void VideoSettingsDialog::setVsyncControlEnable(bool hasOGL)
 {
     ui->cbVSync->setEnabled(hasOGL);
     ui->sbVSyncInterval->setEnabled(hasOGL);
+    ui->cbMotionSmoothing->setEnabled(hasOGL);
 }
 
 void VideoSettingsDialog::onChange3DRenderer(int renderer)
@@ -226,6 +235,22 @@ void VideoSettingsDialog::on_cbBetterPolygons_stateChanged(int state)
 {
     auto& cfg = emuInstance->getGlobalConfig();
     cfg.SetBool("3D.GL.BetterPolygons", (state != 0));
+
+    emit updateVideoSettings(false);
+}
+
+void VideoSettingsDialog::on_cbMotionSmoothing_stateChanged(int state)
+{
+    auto& cfg = emuInstance->getGlobalConfig();
+    cfg.SetBool("Screen.MotionSmoothing", (state != 0));
+
+    emit updateVideoSettings(false);
+}
+
+void VideoSettingsDialog::on_cbCloseSeams_stateChanged(int state)
+{
+    auto& cfg = emuInstance->getGlobalConfig();
+    cfg.SetBool("3D.GL.CloseSeams", (state != 0));
 
     emit updateVideoSettings(false);
 }

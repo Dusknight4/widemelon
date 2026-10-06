@@ -42,7 +42,11 @@ Preserve these behaviors unless the task explicitly changes them:
 - The selected width is fixed for the lifetime of the process so geometry and OpenGL allocations agree.
 - Projection keeps the original world scale and center; extra columns reveal additional 3D geometry rather than stretching the native view.
 - The 2D layers, sprites, menus, videos, and touchscreen remain centered at their native proportions.
-- The expanded path requires the classic OpenGL renderer. Native 4:3 remains the compatibility profile.
+- The expanded path requires the classic OpenGL or the compute shader renderer. Native 4:3 remains the compatibility profile.
+- The compute renderer pads its internal tile grid to whole coarse tiles; its output texture stays exactly the expanded width.
+- "Close gaps between polygons" (`3D.GL.CloseSeams`, classic OpenGL only) offsets the edges of opaque, untextured or repeat-textured polygons by one pixel. Keep translucent, shadow, line and clamp-textured polygons unchanged.
+- Motion smoothing (`Screen.MotionSmoothing`, `src/frontend/qt_sdl/FrameInterpolator.*`) only changes what the desktop window shows. It reads the renderer's output texture after each frame and must never feed back into emulation, display capture or the phone stream, or leave GL state the renderers depend on. Changes that are not motion (fades, scene cuts, menus and text boxes popping in or out) must show real frames; the decision is made on the GPU in the stats pass, so keep it free of CPU readbacks.
+- "Reduce in-game slowdown" (`Emu.ReduceSlowdown`) uses `NDS::SetARM9Overclock` (DS mode only; the DSi keeps its own SCFG clock) and `NDS::SetFastCartTransfers`. Changing the ARM9 clock must convert ARM9 timestamps and clear the JIT block cache, and savestates must keep loading across both settings.
 - Environment profiles and the native Qt startup dialog must produce the same validated configuration.
 
 When changing projection, framebuffer sizes, shaders, compositing, or screen layout, check both the math and the rendered result. Do not fix a 3D-width issue by stretching or repositioning the native 2D interface.

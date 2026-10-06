@@ -852,6 +852,9 @@ layout (local_size_x = ClearCoarseBinMaskLocalSize) in;
 
 void main()
 {
+    if (gl_GlobalInvocationID.x >= uint(TilesPerLine*TileLines))
+        return;
+
     BinningMaskAndOffset[BinningCoarseMaskStart + gl_GlobalInvocationID.x*CoarseBinStride+0] = 0;
     BinningMaskAndOffset[BinningCoarseMaskStart + gl_GlobalInvocationID.x*CoarseBinStride+1] = 0;
 }
@@ -1479,7 +1482,8 @@ void main()
     uvec2 attr = uvec2(ClearAttr, 0U);
     if ((DispCnt & (1<<14)) != 0U)
     {
-        float scale = 1.0 / ScreenWidth;
+        // the 256x256 clear bitmap spans the visible width, like the GL renderer
+        vec2 scale = vec2(1.0 / float(OutputWidth), 1.0 / float(ScreenHeight / 3 * 4));
         vec2 pos = (vec2(gl_GlobalInvocationID.xy) * scale) + ClearBitmapOffset;
         color = uvec2(texture(ClearBitmapColor, pos).r, 0U);
         depth = uvec2(texture(ClearBitmapDepth, pos).r, 0U);
@@ -1562,6 +1566,9 @@ uint BlendFog(uint color, uint depth)
 void main()
 {
     int srcX = int(gl_GlobalInvocationID.x);
+    if (srcX >= OutputWidth)
+        return;
+
     int resultOffset = int(srcX) + int(gl_GlobalInvocationID.y) * ScreenWidth;
 
     uvec2 color = uvec2(ResultValue[resultOffset+ResultColorStart], ResultValue[resultOffset+FramebufferStride+ResultColorStart]);
@@ -1579,7 +1586,7 @@ void main()
             otherAttr.x = ResultValue[resultOffset-1+ResultAttrStart];
             otherDepth.x = ResultValue[resultOffset-1+ResultDepthStart];
         }
-        if (srcX < ScreenWidth-1)
+        if (srcX < OutputWidth-1)
         {
             otherAttr.y = ResultValue[resultOffset+1+ResultAttrStart];
             otherDepth.y = ResultValue[resultOffset+1+ResultDepthStart];

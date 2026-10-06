@@ -22,6 +22,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <algorithm>
+#include <cmath>
 #include "NDS.h"
 #include "GPU.h"
 
@@ -325,17 +327,19 @@ void GLRenderer3D::Reset()
 
 void GLRenderer3D::SetBetterPolygons(bool betterpolygons) noexcept
 {
-    SetRenderSettings(ScaleFactor, betterpolygons);
+    SetRenderSettings(ScaleFactor, betterpolygons, CloseSeams);
 }
 
 void GLRenderer3D::SetScaleFactor(int scale) noexcept
 {
-    SetRenderSettings(scale, BetterPolygons);
+    SetRenderSettings(scale, BetterPolygons, CloseSeams);
 }
 
 
-void GLRenderer3D::SetRenderSettings(int scale, bool betterpolygons) noexcept
+void GLRenderer3D::SetRenderSettings(int scale, bool betterpolygons, bool closeseams) noexcept
 {
+    CloseSeams = closeseams;
+
     if (betterpolygons == BetterPolygons && scale == ScaleFactor)
         return;
 
@@ -421,7 +425,81 @@ void GLRenderer3D::SetupPolygon(GLRenderer3D::RendererPolygon* rp, Polygon* poly
         rp->RenderKey |= (0x80000 | (texattr << 20));
 }
 
-u32* GLRenderer3D::SetupVertex(const Polygon* poly, int vid, const Vertex* vtx, u32 vtxattr, u32 texlayer, u32* vptr) const
+void GLRenderer3D::VertexPosition(const Vertex* vtx, u32& x, u32& y) const
+{
+    if (ScaleFactor > 1)
+    {
+        x = (vtx->HiresPosition[0] * ScaleFactor) >> 4;
+        y = (vtx->HiresPosition[1] * ScaleFactor) >> 4;
+    }
+    else
+    {
+        x = vtx->FinalPosition[0];
+        y = vtx->FinalPosition[1];
+    }
+
+    if (WideMelon::Enabled())
+        x = (static_cast<uint64_t>(vtx->HiresPosition[0]) * ScaleFactor * WideMelon::Width()) / (16 * 256);
+}
+
+// WideMelon: the DS rasterizer fills pixels that polygon edges only touch, which
+// hides the slightly mismatched vertices games send for neighbouring polygons.
+// OpenGL samples pixel centres instead, so those mismatches show up as
+// background-coloured seams (the "black lines" in the Pokemon games). Pushing
+// every edge outward by one pixel makes neighbours overlap instead.
+void GLRenderer3D::SeamOffsets(const Polygon* poly, s32 offsets[10][2]) const
+{
+    const u32 nverts = poly->NumVertices;
+    float px[10], py[10];
+    float area = 0.f;
+    for (u32 i = 0; i < nverts; i++)
+    {
+        u32 x, y;
+        VertexPosition(poly->Vertices[i], x, y);
+        px[i] = (float)x;
+        py[i] = (float)y;
+        offsets[i][0] = offsets[i][1] = 0;
+    }
+    for (u32 i = 0; i < nverts; i++)
+    {
+        u32 j = (i + 1) % nverts;
+        area += px[i] * py[j] - px[j] * py[i];
+    }
+    if (area == 0.f)
+        return;
+
+    // outward unit normal of the edge starting at vertex i
+    const float sign = (area > 0.f) ? 1.f : -1.f;
+    float nx[10], ny[10];
+    for (u32 i = 0; i < nverts; i++)
+    {
+        u32 j = (i + 1) % nverts;
+        float dx = px[j] - px[i], dy = py[j] - py[i];
+        float len = std::sqrt(dx*dx + dy*dy);
+        if (len > 0.f) { nx[i] = sign * dy / len; ny[i] = -sign * dx / len; }
+        else           { nx[i] = ny[i] = 0.f; }
+    }
+
+    for (u32 i = 0; i < nverts; i++)
+    {
+        u32 prev = (i + nverts - 1) % nverts;
+        float ax = nx[prev], ay = ny[prev], bx = nx[i], by = ny[i];
+        if (ax == 0.f && ay == 0.f) { ax = bx; ay = by; }
+        if (bx == 0.f && by == 0.f) { bx = ax; by = ay; }
+
+        // miter join: moves both adjacent edges out by exactly one pixel
+        float denom = 1.f + ax*bx + ay*by;
+        float ox, oy;
+        if (denom > 0.25f) { ox = (ax + bx) / denom; oy = (ay + by) / denom; }
+        else               { ox = ax + bx; oy = ay + by; } // very sharp corner, limit the spike
+
+        offsets[i][0] = (s32)std::lround(ox);
+        offsets[i][1] = (s32)std::lround(oy);
+    }
+}
+
+u32* GLRenderer3D::SetupVertex(const Polygon* poly, int vid, const Vertex* vtx, u32 vtxattr, u32 texlayer, u32* vptr,
+                               const s32* offset) const
 {
     u32 z = poly->FinalZ[vid];
     u32 w = poly->FinalW[vid];
@@ -433,16 +511,7 @@ u32* GLRenderer3D::SetupVertex(const Polygon* poly, int vid, const Vertex* vtx, 
     while (z > 0xFFFF) { z >>= 1; zshift++; }
 
     u32 x, y;
-    if (ScaleFactor > 1)
-    {
-        x = (vtx->HiresPosition[0] * ScaleFactor) >> 4;
-        y = (vtx->HiresPosition[1] * ScaleFactor) >> 4;
-    }
-    else
-    {
-        x = vtx->FinalPosition[0];
-        y = vtx->FinalPosition[1];
-    }
+    VertexPosition(vtx, x, y);
 
     // correct nearly-vertical edges that would look vertical on the DS
     /*{
@@ -465,8 +534,11 @@ u32* GLRenderer3D::SetupVertex(const Polygon* poly, int vid, const Vertex* vtx, 
         }
     }*/
 
-    if (WideMelon::Enabled())
-        x = (static_cast<uint64_t>(vtx->HiresPosition[0]) * ScaleFactor * WideMelon::Width()) / (16 * 256);
+    if (offset)
+    {
+        x = (u32)std::clamp((s32)x + offset[0], 0, 0xFFFF);
+        y = (u32)std::clamp((s32)y + offset[1], 0, 0xFFFF);
+    }
 
     *vptr++ = x | (y << 16);
     *vptr++ = z | (w << 16);
@@ -582,6 +654,17 @@ void GLRenderer3D::BuildPolygons(GLRenderer3D::RendererPolygon* polygons, int np
         rp->TexID = curtexid;
         rp->TexRepeat = (poly->TexParam >> 16) & 0xF;
 
+        // WideMelon: widen solid surfaces such as terrain (see SeamOffsets).
+        // Translucent and shadow polygons would blend twice where they overlap,
+        // and clamped textures are often interface elements that must stay sharp.
+        s32 seam[10][2];
+        const bool textured = TexEnable && ((poly->TexParam >> 26) & 0x7) != 0;
+        const bool closeSeams = CloseSeams && poly->Type == 0 && !poly->Translucent
+            && !poly->IsShadowMask && !poly->IsShadow && alpha != 0
+            && (!textured || (poly->TexParam & (3 << 16)) != 0);
+        if (closeSeams)
+            SeamOffsets(poly, seam);
+
         // assemble vertices
         if (poly->Type == 1) // line
         {
@@ -620,7 +703,7 @@ void GLRenderer3D::BuildPolygons(GLRenderer3D::RendererPolygon* polygons, int np
             {
                 Vertex* vtx = poly->Vertices[j];
 
-                vptr = SetupVertex(poly, j, vtx, vtxattr, curtexlayer, vptr);
+                vptr = SetupVertex(poly, j, vtx, vtxattr, curtexlayer, vptr, closeSeams ? seam[j] : nullptr);
                 vidx++;
             }
 
@@ -642,7 +725,7 @@ void GLRenderer3D::BuildPolygons(GLRenderer3D::RendererPolygon* polygons, int np
                 {
                     Vertex* vtx = poly->Vertices[j];
 
-                    vptr = SetupVertex(poly, j, vtx, vtxattr, curtexlayer, vptr);
+                    vptr = SetupVertex(poly, j, vtx, vtxattr, curtexlayer, vptr, closeSeams ? seam[j] : nullptr);
 
                     if (j >= 2)
                     {
@@ -736,7 +819,7 @@ void GLRenderer3D::BuildPolygons(GLRenderer3D::RendererPolygon* polygons, int np
                 {
                     Vertex* vtx = poly->Vertices[j];
 
-                    vptr = SetupVertex(poly, j, vtx, vtxattr, curtexlayer, vptr);
+                    vptr = SetupVertex(poly, j, vtx, vtxattr, curtexlayer, vptr, closeSeams ? seam[j] : nullptr);
 
                     if (j >= 1)
                     {

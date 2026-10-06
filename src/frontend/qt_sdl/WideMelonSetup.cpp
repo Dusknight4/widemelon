@@ -94,7 +94,9 @@ void applyProfile(int viewWidth, int scale, int windowWidth, int windowHeight,
     qputenv("WIDEMELON_INTEGER", integerScaling ? "1" : "0");
 
     auto global = Config::GetGlobalTable();
-    global.SetInt("3D.Renderer", renderer3D_OpenGL);
+    // the expanded viewport needs one of the OpenGL renderers
+    if (global.GetInt("3D.Renderer") != renderer3D_OpenGLCompute)
+        global.SetInt("3D.Renderer", renderer3D_OpenGL);
     global.SetInt("3D.GL.ScaleFactor", scale);
     global.SetBool("Screen.Filter", false);
     global.SetInt("WideMelon.ViewWidth", viewWidth);

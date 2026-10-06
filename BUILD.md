@@ -116,6 +116,26 @@ uses loopback. To exercise the production listener on a real private adapter,
 run it with `WIDEMELON_PHONE_TEST_ADDRESS` set to the host's active IPv4 address;
 the same HTTP, WebSocket, subnet, and pairing checks then run over that address.
 
+### Single-file Windows build with MSYS2
+
+A standalone `widemelon.exe` that needs no DLLs can also be built with MSYS2's
+UCRT64 toolchain and static Qt. In a UCRT64 shell, install
+`mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-static,SDL2,libarchive,zstd,faad2,enet}`
+and run:
+
+```sh
+cmake -S . -B build/static -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_STATIC=ON -DUSE_QT6=ON -DPORTABLE=ON \
+  -DCMAKE_PREFIX_PATH=/ucrt64/qt6-static \
+  -DPKG_CONFIG_ARGN=--static -DCMAKE_DISABLE_FIND_PACKAGE_harfbuzz=ON
+cmake --build build/static
+```
+
+`PKG_CONFIG_ARGN` and disabling harfbuzz's CMake package make Qt link
+HarfBuzz statically through pkg-config instead of through its DLL. This build
+uses Qt's Windows Media Foundation backend for cameras instead of FFmpeg. The
+portable executable keeps its settings and saves in its own folder.
+
 ## Phone screen and controller
 
 The phone bridge is frontend-only and starts only after an explicit action. It

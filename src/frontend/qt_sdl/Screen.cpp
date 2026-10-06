@@ -42,6 +42,7 @@
 #include "Platform.h"
 #include "Config.h"
 
+#include "FrameInterpolator.h"
 #include "main_shaders.h"
 #include "OSD_shaders.h"
 #include "font.h"
@@ -83,6 +84,18 @@ ScreenPanel::ScreenPanel(QWidget* parent) : QWidget(parent)
 
     QTimer* mouseTimer = setupMouseTimer();
     connect(mouseTimer, &QTimer::timeout, [=] { if (mouseHide) setCursor(Qt::BlankCursor);});
+
+    // motion smoothing presents as many frames as the screen we're on can show
+    auto updateRefreshRate = [this]
+    {
+        if (const QScreen* s = screen())
+            if (s->refreshRate() > 1.0)
+                emuInstance->displayRefreshRate = s->refreshRate();
+    };
+    updateRefreshRate();
+    QTimer* refreshTimer = new QTimer(this);
+    connect(refreshTimer, &QTimer::timeout, this, updateRefreshRate);
+    refreshTimer->start(1000);
 
     osdEnabled = false;
     osdID = 1;
@@ -895,7 +908,11 @@ ScreenPanelGL::ScreenPanelGL(QWidget* parent) : ScreenPanel(parent)
 }
 
 ScreenPanelGL::~ScreenPanelGL()
-{}
+{
+    // deinitOpenGL() normally frees the interpolator; otherwise its GL objects
+    // go away with the context, which may not be current here
+    (void)interpolator.release();
+}
 
 bool ScreenPanelGL::createContext()
 {
@@ -1071,6 +1088,9 @@ void ScreenPanelGL::deinitOpenGL()
 
     glContext->MakeCurrent();
 
+    interpolator.reset();
+    smoothingActive = false;
+
     glDeleteTextures(1, &screenTexture);
     if (mainWindow->getWindowID() == 0 && emuInstance->getPhoneBridge())
         emuInstance->getPhoneBridge()->setCaptureAvailable(false);
@@ -1215,6 +1235,13 @@ void ScreenPanelGL::drawScreen()
 
         capturePhoneFrame(phoneSourceTexture, phoneSourceWidth, phoneSourceHeight);
 
+        const GLuint displayTexture = smoothFrame(nds, phoneSourceTexture);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, w, h);
+        glUseProgram(screenShaderProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, displayTexture);
+
         screenSettingsLock.lock();
 
         GLint filter = this->filter ? GL_LINEAR : GL_NEAREST;
@@ -1323,6 +1350,43 @@ void ScreenPanelGL::drawScreen()
     }
 
     glContext->SwapBuffers();
+}
+
+GLuint ScreenPanelGL::smoothFrame(melonDS::NDS* nds, GLuint source)
+{
+    if (!emuInstance->presentSmoothed || interpolatorFailed)
+    {
+        if (smoothingActive && interpolator)
+            interpolator->Reset();
+        smoothingActive = false;
+        return source;
+    }
+
+    if (!interpolator)
+    {
+        interpolator = std::make_unique<WideMelon::FrameInterpolator>();
+        if (!interpolator->Init())
+        {
+            Platform::Log(Platform::LogLevel::Error, "Motion smoothing is unavailable: its shaders failed to compile.\n");
+            interpolator.reset();
+            interpolatorFailed = true;
+            return source;
+        }
+    }
+    smoothingActive = true;
+
+    GLint width = 0, height = 0;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, source);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, 0, GL_TEXTURE_WIDTH, &width);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, 0, GL_TEXTURE_HEIGHT, &height);
+    interpolator->Submit(source, width, height, nds->NumFrames);
+
+    // Show the game slightly in the past, so that the real image after the
+    // one on screen already exists: one frame for 30 fps games at 60 Hz,
+    // half a frame for 60 fps games at 120 Hz.
+    const double delay = std::max(0.0, interpolator->ContentPeriod() - 1.0 / emuInstance->presentSubframes);
+    const GLuint output = interpolator->Output(nds->NumFrames + emuInstance->presentPhase - delay);
+    return output ? output : source;
 }
 
 void ScreenPanelGL::capturePhoneFrame(GLuint sourceTexture, int sourceWidth, int sourceHeight)

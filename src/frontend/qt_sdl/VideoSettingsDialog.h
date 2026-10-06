@@ -68,6 +68,8 @@ private slots:
 
     void on_cbxGLResolution_currentIndexChanged(int idx);
     void on_cbBetterPolygons_stateChanged(int state);
+    void on_cbCloseSeams_stateChanged(int state);
+    void on_cbMotionSmoothing_stateChanged(int state);
     void on_cbxComputeHiResCoords_stateChanged(int state);
 
     void on_cbSoftwareThreaded_stateChanged(int state);
@@ -87,6 +89,8 @@ private:
     int oldSoftThreaded;
     int oldGLScale;
     int oldGLBetterPolygons;
+    int oldGLCloseSeams;
+    int oldMotionSmoothing;
     int oldHiresCoordinates;
 };
 

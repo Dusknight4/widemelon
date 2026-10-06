@@ -77,6 +77,7 @@ EmuSettingsDialog::EmuSettingsDialog(QWidget* parent) : QDialog(parent), ui(new 
     ui->cbxConsoleType->setCurrentIndex(cfg.GetInt("Emu.ConsoleType"));
 
     ui->chkDirectBoot->setChecked(cfg.GetBool("Emu.DirectBoot"));
+    ui->chkReduceSlowdown->setChecked(cfg.GetBool("Emu.ReduceSlowdown"));
 
 #ifdef JIT_ENABLED
     ui->chkEnableJIT->setChecked(cfg.GetBool("JIT.Enable"));
@@ -303,6 +304,7 @@ void EmuSettingsDialog::done(int r)
 
             cfg.SetInt("Emu.ConsoleType", ui->cbxConsoleType->currentIndex());
             cfg.SetBool("Emu.DirectBoot", ui->chkDirectBoot->isChecked());
+            cfg.SetBool("Emu.ReduceSlowdown", ui->chkReduceSlowdown->isChecked());
 
             Config::Save();
 

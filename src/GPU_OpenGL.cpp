@@ -338,7 +338,7 @@ void GLRenderer::SetRenderSettings(RendererSettings& settings)
     else
     {
         auto rend3d = dynamic_cast<GLRenderer3D *>(Rend3D.get());
-        rend3d->SetRenderSettings(settings.ScaleFactor, settings.BetterPolygons);
+        rend3d->SetRenderSettings(settings.ScaleFactor, settings.BetterPolygons, settings.CloseSeams);
     }
 }
 

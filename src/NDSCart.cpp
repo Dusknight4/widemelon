@@ -811,7 +811,7 @@ void NDSCartSlot::Interface::WriteROMCnt(u32 val, u32 mask)
     // gap2 delay applies before each 0x200 byte block (including the first block)
     // TODO: advance read position if bit28 is set
 
-    u32 xfercycle = (ROMCnt & (1<<27)) ? 8 : 5;
+    u32 xfercycle = TransferCycle();
     u32 cmddelay = 8 + (ROMCnt & 0x1FFF);
     if (datasize) cmddelay += ((ROMCnt >> 16) & 0x3F);
 
@@ -847,6 +847,14 @@ void NDSCartSlot::Interface::WriteROMCnt(u32 val, u32 mask)
     }
 }
 
+
+u32 NDSCartSlot::Interface::TransferCycle() const
+{
+    // bus cycles per byte on the card bus
+    if (Parent.FastTransfers)
+        return 1;
+    return (ROMCnt & (1<<27)) ? 8 : 5;
+}
 
 void NDSCartSlot::Interface::ROMReceiveData(u32 param)
 {
@@ -885,7 +893,7 @@ void NDSCartSlot::Interface::ROMAdvanceReceive()
     if (ROMTransferPos >= ROMTransferLen)
         return;
 
-    u32 xfercycle = (ROMCnt & (1<<27)) ? 8 : 5;
+    u32 xfercycle = TransferCycle();
     u32 delay = 4;
     if (!(ROMTransferPos & 0x1FF))
         delay += ((ROMCnt >> 16) & 0x3F);
@@ -926,7 +934,7 @@ void NDSCartSlot::Interface::ROMSendData(u32 param)
 
 void NDSCartSlot::Interface::ROMAdvanceSend()
 {
-    u32 xfercycle = (ROMCnt & (1<<27)) ? 8 : 5;
+    u32 xfercycle = TransferCycle();
     u32 delay = 4;
 
     if (ROMTransferPos < ROMTransferLen)

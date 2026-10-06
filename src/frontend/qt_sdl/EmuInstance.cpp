@@ -399,15 +399,16 @@ void EmuInstance::deinitOpenGL(int win)
         windowList[win]->deinitOpenGL();
 }
 
-void EmuInstance::setVSyncGL(bool vsync)
+void EmuInstance::setVSyncGL(bool vsync, int intervalScale)
 {
     int intv;
 
     vsync = vsync && globalCfg.GetBool("Screen.VSync");
     if (vsync)
-        intv = globalCfg.GetInt("Screen.VSyncInterval");
+        intv = globalCfg.GetInt("Screen.VSyncInterval") * intervalScale;
     else
         intv = 0;
+    vsyncIntervalScale = intervalScale;
 
     for (int i = 0; i < kMaxWindows; i++)
     {
@@ -1391,6 +1392,11 @@ bool EmuInstance::updateConsole() noexcept
         nds->EjectGBACart();
     else
         nds->SetGBACart(std::move(nextgbacart));
+
+    // WideMelon: "Reduce in-game slowdown"
+    const bool reduceSlowdown = globalCfg.GetBool("Emu.ReduceSlowdown");
+    nds->SetARM9Overclock(reduceSlowdown);
+    nds->SetFastCartTransfers(reduceSlowdown);
 
     renderLock.unlock();
 

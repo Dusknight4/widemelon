@@ -215,6 +215,38 @@ void NDS::SetARM7RegionTimings(u32 addrstart, u32 addrend, u32 region, int buswi
     }
 }
 
+void NDS::SetARM9Overclock(bool enable) noexcept
+{
+    ARM9Overclock = enable;
+    if (ConsoleType != 0)
+        return; // the DSi sets its own ARM9 clock
+
+    const u32 shift = enable ? 2 : 1;
+    if (shift == ARM9ClockShift)
+        return;
+
+    // as in DSi::SetScfgClock9
+    ARM9Timestamp >>= ARM9ClockShift;
+    ARM9Target    >>= ARM9ClockShift;
+    ARM9ClockShift = shift;
+    ARM9Timestamp <<= ARM9ClockShift;
+    ARM9Target    <<= ARM9ClockShift;
+    ARM9.UpdateRegionTimings(0x00000, 0x100000);
+#ifdef JIT_ENABLED
+    if (EnableJIT)
+        JIT.ResetBlockCache(); // compiled blocks count cycles at the old clock
+#endif
+}
+
+void NDS::SetFastCartTransfers(bool enable) noexcept
+{
+    for (NDSCart::NDSCartSlot* slot : NDSCartSlots)
+    {
+        if (slot)
+            slot->FastTransfers = enable;
+    }
+}
+
 #ifdef JIT_ENABLED
 void NDS::SetJITArgs(std::optional<JITArgs> args) noexcept
 {
@@ -456,7 +488,7 @@ void NDS::Reset()
     }
     else
     {
-        ARM9ClockShift = 1;
+        ARM9ClockShift = ARM9Overclock ? 2 : 1;
         MainRAMMask = 0x3FFFFF;
     }
     // has to be called before InitTimings
@@ -717,6 +749,24 @@ bool NDS::DoSavestate(Savestate* file)
     file->Var32(&NumFrames);
     file->Var32(&NumLagFrames);
     file->Bool32(&LagFrameFlag);
+
+    if (!file->Saving && ConsoleType == 0)
+    {
+        // WideMelon: the state may come from a session with the other ARM9 clock
+        // (SetARM9Overclock). ARM9 time stays within a frame of system time, so
+        // the clock it was saved with is the one that matches; convert from it.
+        const u32 other = (ARM9ClockShift == 2) ? 1 : 2;
+        auto distance = [this](u32 shift)
+        {
+            const u64 t = ARM9Timestamp >> shift;
+            return (t > SysTimestamp) ? t - SysTimestamp : SysTimestamp - t;
+        };
+        if (distance(other) < distance(ARM9ClockShift))
+        {
+            ARM9Timestamp = (ARM9Timestamp >> other) << ARM9ClockShift;
+            ARM9Target    = (ARM9Target >> other) << ARM9ClockShift;
+        }
+    }
 
     // TODO: save KeyInput????
     file->VarArray(KeyCnt, 2*sizeof(u16));

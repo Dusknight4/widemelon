@@ -36,7 +36,7 @@ public:
     bool Init() override;
     void Reset() override;
 
-    void SetRenderSettings(int scale, bool betterpolygons) noexcept;
+    void SetRenderSettings(int scale, bool betterpolygons, bool closeseams = false) noexcept;
     void SetBetterPolygons(bool betterpolygons) noexcept;
     void SetScaleFactor(int scale) noexcept;
     [[nodiscard]] bool GetBetterPolygons() const noexcept { return BetterPolygons; }
@@ -78,7 +78,10 @@ private:
     bool BuildRenderShader(bool wbuffer);
     void UseRenderShader(bool wbuffer);
     void SetupPolygon(RendererPolygon* rp, Polygon* polygon) const;
-    u32* SetupVertex(const Polygon* poly, int vid, const Vertex* vtx, u32 vtxattr, u32 texlayer, u32* vptr) const;
+    void VertexPosition(const Vertex* vtx, u32& x, u32& y) const;
+    void SeamOffsets(const Polygon* poly, s32 offsets[10][2]) const;
+    u32* SetupVertex(const Polygon* poly, int vid, const Vertex* vtx, u32 vtxattr, u32 texlayer, u32* vptr,
+                     const s32* offset = nullptr) const;
     void BuildPolygons(RendererPolygon* polygons, int npolys, int captureinfo[16]);
     void SetupPolygonTexture(const RendererPolygon* poly) const;
     int RenderSinglePolygon(int i) const;
@@ -156,6 +159,7 @@ private:
 
     int ScaleFactor {};
     bool BetterPolygons {};
+    bool CloseSeams {};
     int ScreenW {}, ScreenH {};
 
     GLuint ColorBufferTex {}, DepthBufferTex {}, AttrBufferTex {};

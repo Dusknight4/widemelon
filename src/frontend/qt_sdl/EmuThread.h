@@ -33,6 +33,7 @@
 
 #include "NDSCart.h"
 #include "GBACart.h"
+#include "PresentPacer.h"
 
 namespace melonDS
 {
@@ -165,6 +166,7 @@ private:
 
     void updateRenderer();
     void compileShaders();
+    void presentFrame(bool smooth, double emuMs = 0.0, double periodMs = 0.0);
 
     enum EmuStatusKind
     {
@@ -200,6 +202,11 @@ private:
     bool useOpenGL;
     int videoRenderer;
     bool videoSettingsDirty;
+
+    bool motionSmoothing = false;
+    bool vsyncEnabled = false;
+    WideMelon::PresentPacer presentPacer;
+    double lastFrameStart = 0.0;
 };
 
 #endif // EMUTHREAD_H

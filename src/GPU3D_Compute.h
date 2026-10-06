@@ -213,7 +213,10 @@ private:
 
     GLuint Framebuffer = 0;
 
+    // ScreenWidth is the tile-aligned internal width; OutputWidth is the
+    // visible (possibly WideMelon-expanded) width of the 3D output texture.
     int ScreenWidth, ScreenHeight;
+    int OutputWidth;
     int TilesPerLine, TileLines;
     int ScaleFactor = -1;
     int MaxWorkTiles;

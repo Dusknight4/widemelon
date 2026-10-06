@@ -57,6 +57,16 @@
        </widget>
       </item>
       <item row="3" column="0">
+       <widget class="QCheckBox" name="cbCloseSeams">
+        <property name="whatsThis">
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Widens solid polygons by one pixel so neighbouring polygons overlap. This removes the thin black lines and dots that can appear between terrain tiles, for example in the Pokémon games.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+        </property>
+        <property name="text">
+         <string>Close gaps between polygons</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
        <widget class="QCheckBox" name="cbxComputeHiResCoords">
         <property name="text">
          <string>Use high resolution coordinates</string>
@@ -200,6 +210,19 @@
         </property>
        </widget>
       </item>
+      <item row="8" column="0" colspan="2">
+       <widget class="QCheckBox" name="cbMotionSmoothing">
+        <property name="toolTip">
+         <string>Generates in-between frames, like the motion smoothing on TVs. 30 fps games such as Pokémon look like 60 fps, and every game gets smoother on a 120 Hz or faster display. Adds up to one frame of delay.</string>
+        </property>
+        <property name="whatsThis">
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Generates in-between frames, like the motion smoothing on TVs. 30 fps games such as Pokémon look like 60 fps, and every game gets smoother on a 120 Hz or faster display. Adds up to one frame of delay.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+        </property>
+        <property name="text">
+         <string>Motion smoothing</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>
@@ -214,6 +237,8 @@
   <tabstop>cbSoftwareThreaded</tabstop>
   <tabstop>cbxGLResolution</tabstop>
   <tabstop>cbBetterPolygons</tabstop>
+  <tabstop>cbCloseSeams</tabstop>
+  <tabstop>cbMotionSmoothing</tabstop>
  </tabstops>
  <resources/>
  <connections>

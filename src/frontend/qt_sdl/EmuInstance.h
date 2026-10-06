@@ -20,6 +20,7 @@
 #define EMUINSTANCE_H
 
 #include <SDL2/SDL.h>
+#include <atomic>
 
 #include "Platform.h"
 #include "main.h"
@@ -122,7 +123,7 @@ public:
     bool usesOpenGL();
     void initOpenGL(int win);
     void deinitOpenGL(int win);
-    void setVSyncGL(bool vsync);
+    void setVSyncGL(bool vsync, int intervalScale = 1);
     void makeCurrentGL();
     void releaseGL();
 
@@ -308,6 +309,17 @@ public:
     bool fastForwardToggled;
     bool slowmoToggled;
     bool doAudioSync;
+
+    // WideMelon motion smoothing. The emu thread sets these before each
+    // present: whether to show generated frames, how many presents it makes
+    // per emulated frame, and which of them this is (0 to 1).
+    bool presentSmoothed = false;
+    int presentSubframes = 1;
+    double presentPhase = 0.0;
+    // multiple of the configured vsync interval last set by setVSyncGL()
+    int vsyncIntervalScale = 1;
+    // refresh rate of the screen showing the main window, from the GUI thread
+    std::atomic<double> displayRefreshRate {60.0};
 private:
 
     std::unique_ptr<melonDS::Savestate> backupState;

@@ -38,6 +38,8 @@
 
 class MainWindow;
 class EmuInstance;
+namespace melonDS { class NDS; }
+namespace WideMelon { class FrameInterpolator; }
 
 
 const struct { int id; float ratio; const char* label; } aspectRatios[] =
@@ -251,6 +253,12 @@ private:
     PhoneFramePacer phoneFramePacer;
 
     void capturePhoneFrame(GLuint sourceTexture, int sourceWidth, int sourceHeight);
+
+    // WideMelon motion smoothing
+    std::unique_ptr<WideMelon::FrameInterpolator> interpolator;
+    bool interpolatorFailed = false;
+    bool smoothingActive = false;
+    GLuint smoothFrame(melonDS::NDS* nds, GLuint source);
 
     void osdRenderItem(OSDItem* item) override;
     void osdDeleteItem(OSDItem* item) override;
