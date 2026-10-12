@@ -929,6 +929,8 @@ void EmuThread::updateBattleState()
     }
     emuInstance->battleLayoutActive = battleLayoutEnabled
         && battleDetector.InBattle(nds->MainRAM, nds->MainRAMMask);
+    if (auto* gl = dynamic_cast<melonDS::GLRenderer*>(&nds->GetRenderer()))
+        gl->SetWideBackdropWanted(emuInstance->battleLayoutActive && WideMelon::BattleBackdropEnabled());
 }
 
 void EmuThread::presentFrame(bool smooth, double emuMs, double periodMs)

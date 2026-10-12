@@ -135,6 +135,7 @@ DefaultList<std::string> DefaultStrings =
     {"DSi.SD.ImagePath",                "dsisd.bin"},
     {"Instance*.Firmware.Username",     "melonDS"},
     {"WideMelon.Phone.Interface",       ""},
+    {"WideMelon.SecondSaveFolder",      ""},
     {"WideMelon.Phone.Layout",          ""}
 };
 

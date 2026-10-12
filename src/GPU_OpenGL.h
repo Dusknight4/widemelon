@@ -20,6 +20,7 @@
 #define GPU_OPENGL_H
 
 #include "OpenGLSupport.h"
+#include <vector>
 #include "GPU.h"
 #include "GPU2D_OpenGL.h"
 #include "GPU3D_OpenGL.h"
@@ -51,6 +52,31 @@ public:
     void SyncVRAMCapture(u32 bank, u32 start, u32 len, bool complete) override;
 
     bool GetFramebuffers(void** top, void** bottom) override;
+
+    // WideMelon: engine A's background layer continued past the DS screen's right edge
+    // (see RenderWideBackdrop): a one-layer texture array, BackdropWidth x 192 DS
+    // pixels, or 0 when there is none. The last few are kept, each for the frame
+    // whose picture it goes with (the frame count after that frame), so a picture
+    // shown slightly in the past (motion smoothing) gets the one from its own frame.
+    //
+    // Piece, when not 0: where a battle's info bar runs off the right edge, the
+    // bar's own left end belongs past the edge, turned round. Piece (PieceWidth x
+    // 192, a texture2D) is that end as it was taken, once the bar stood still:
+    // column d is the bar's column PieceColumn - d, alpha marks the bar's pixels in
+    // lines PieceRows[0..1]. PieceShift is how far down the bar is now, in the
+    // frame nearest the one shown and in the one on its other side; WideWingFS
+    // copies the bar's pixels from the picture on screen, so it bobs with the bar.
+    static constexpr int BackdropWidth = 128;
+    static constexpr int PieceWidth = 48;
+    struct WideBackdrop { GLuint Tex = 0, Piece = 0; float PieceColumn = 0.f; int PieceShift[2] {}, PieceRows[2] {}; };
+    WideBackdrop GetWideBackdrop(double frame) const;
+    // whether to make it: the frontend says so while a battle is on
+    void SetWideBackdropWanted(bool wanted) { WideBackdropWanted = wanted; }
+    // fragment shader drawing the backdrop (ScreenTex, unit 0) with the bar's end over
+    // it: ShownTex (unit 1) is the picture on screen, PieceTex (unit 2); uniforms
+    // uPiece, uColumn, uShift, uRows, and uSide, uWide (the picture's width and its part beside
+    // the DS screen on each side, in DS pixels); fTexcoord across the backdrop
+    static const char* const WideWingFS;
 
     bool NeedsShaderCompile() override;
     void ShaderCompileStep(int& current, int& count) override;
@@ -100,6 +126,28 @@ private:
 
     GLuint FPOutputTex[2];               // final output
     GLuint FPOutputFB[2];
+
+    static constexpr int NumBackdrops = 4;
+    GLuint BackdropTex[NumBackdrops] {}, BackdropFB = 0;
+    GLuint EdgeRowsShader = 0, EdgeRowsTex = 0, EdgeRowsFB = 0;   // per line: where sprites reaching the right edge start
+    GLuint PieceShader = 0, PieceTex = 0, PieceFB = 0;
+    u32 BackdropFrame[NumBackdrops] {};
+    bool BackdropValid[NumBackdrops] {};
+    bool BackdropPiece[NumBackdrops] {};
+    int BackdropShift[NumBackdrops] {};   // where the bar is, lines down from where its end was taken
+    int BackdropNext = 0;
+    bool WideBackdropWanted = false;
+    // the info bar: the sprites reaching the edge, as where each line starts, while
+    // they keep that shape (only moving up and down); once they have held it for a
+    // while, their end is taken (PieceRows) and shown whenever the shape is there
+    std::vector<float> BarRows, PieceRows;
+    int BarFrames = 0;
+    float PieceColumn = 0.f;
+    int PieceTop = 0, PieceBottom = 0;
+    // the scenery's scroll the last time a bar stood still: where it rests in a
+    // battle (while battle intros slide it, a line at a time)
+    u16 RestingScrollX = 0, RestingScrollY = 0;
+    void RenderWideBackdrop();
 
     struct sCaptureConfig
     {

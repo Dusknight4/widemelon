@@ -18,6 +18,9 @@
 
 #include "WideMelon.h"
 #include <string.h>
+#include <cmath>
+#include <cstdlib>
+#include <algorithm>
 #include "NDS.h"
 #include "GPU_OpenGL.h"
 
@@ -59,6 +62,119 @@ GLRenderer::GLRenderer(melonDS::NDS& nds, bool compute)
     glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST); \
     glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
+// WideMelon: past the DS screen's right edge in a battle, the screen's own
+// compositing carries on (GLRenderer2D::RenderWing): the layers' maps continue
+// there (battle backgrounds are wider than the screen), scrolling, blending and
+// fading with the screen. Below the scenery's art (behind the text box), found
+// for each column, the art just above is copied straight down.
+//
+// A battle's info bar, cut off by the screen's right edge, gets its left end
+// turned round past the edge (kWidePieceFS, WideWingFS), so the bar ends the way
+// it begins.
+static const char* kWideEdgeRowsFS = R"(#version 140
+// for each line, where the sprites reaching the screen's right edge start
+// (a gap of a couple of pixels doesn't end them), or -1
+uniform sampler2DArray OBJTex;
+uniform int uScale;
+out vec4 oColor;
+bool Opaque(int x, int y)
+{
+    return texelFetch(OBJTex, ivec3(x * uScale, y * uScale, 0), 0).a > 0.0;
+}
+void main()
+{
+    int y = int(gl_FragCoord.y);
+    float start = -1.0;
+    if (Opaque(255, y))
+    {
+        int gap = 0;
+        start = 255.0;
+        for (int x = 254; x >= 0 && gap <= 2; x--)
+        {
+            if (Opaque(x, y)) { start = float(x); gap = 0; }
+            else gap++;
+        }
+    }
+    oColor = vec4(start, 0.0, 0.0, 1.0);
+}
+)";
+
+// the info bar's end, PieceWidth x 192, as it was when it was taken: for each
+// column out from the edge, the bar's column that far in from uColumn, in the
+// finished picture. Alpha marks the bar's own pixels, exactly.
+static const char* kWidePieceFS = R"(#version 140
+uniform sampler2DArray OBJTex;
+uniform sampler2DArray FrameTex;    // the finished picture, top screen in layer 0
+uniform int uScale;
+uniform int uSide;                  // the picture's part left of the DS screen
+uniform int uColumn;
+uniform ivec2 uRows;                // the bar's first and last line
+uniform float uStarts[64];          // where the bar starts on each of them (other sprites lie further in)
+out vec4 oColor;
+void main()
+{
+    ivec2 q = ivec2(gl_FragCoord.xy);
+    int x = uColumn - q.x;
+    bool bar = x >= 0 && q.y >= uRows.x && q.y <= uRows.y && float(x) >= uStarts[q.y - uRows.x]
+            && texelFetch(OBJTex, ivec3(x * uScale, q.y * uScale, 0), 0).a > 0.0;
+    vec3 c = bar ? texelFetch(FrameTex, ivec3((x + uSide) * uScale, q.y * uScale, 0), 0).rgb : vec3(0.0);
+    oColor = vec4(c, bar ? 1.0 : 0.0);
+}
+)";
+
+// The bar bobs: uShift holds where it is (lines down from where its end was
+// taken) in the two frames nearest the picture on screen. Whichever the picture
+// matches is used, and only the bar's own pixels are copied, from the picture.
+const char* const GLRenderer::WideWingFS = R"(#version 140
+uniform sampler2DArray ScreenTex;
+uniform sampler2DArray ShownTex;
+uniform sampler2D PieceTex;
+uniform int uPiece;
+uniform float uColumn;
+uniform float uSide;
+uniform float uWide;
+uniform ivec2 uShift;
+uniform ivec2 uRows;
+smooth in vec3 fTexcoord;
+out vec4 oColor;
+vec3 Shown(int x, int y)
+{
+    return texture(ShownTex, vec3((float(x) + 0.5 + uSide) / uWide, (float(y) + 0.5) / 192.0, 0.0)).rgb;
+}
+vec4 Piece(int d, int y)
+{
+    return (y < 0 || y > 191) ? vec4(0.0) : texelFetch(PieceTex, ivec2(d, y), 0);
+}
+int Score(int s)
+{
+    // how many of the bar's pixels in its first few columns the picture has there
+    int n = 0;
+    for (int d = 0; d < 3; d++)
+        for (int y = uRows.x; y <= uRows.y; y++)
+        {
+            vec4 m = Piece(d, y);
+            if (m.a > 0.5 && all(lessThan(abs(Shown(int(uColumn) - d, y + s) - m.rgb), vec3(0.06)))) n++;
+        }
+    return n;
+}
+void main()
+{
+    vec4 c = texture(ScreenTex, vec3(fTexcoord.xy, 0.0));
+    if (uPiece != 0)
+    {
+        ivec2 q = ivec2(floor(fTexcoord.xy * vec2(128.0, 192.0)));
+        if (q.x < textureSize(PieceTex, 0).x
+            && (Piece(q.x, q.y - uShift.x).a > 0.5 || Piece(q.x, q.y - uShift.y).a > 0.5))
+        {
+            int s = uShift.x;
+            if (uShift.y != uShift.x && Score(uShift.y) > Score(uShift.x)) s = uShift.y;
+            if (Piece(q.x, q.y - s).a > 0.5) c = vec4(Shown(int(uColumn) - q.x, q.y), 1.0);
+        }
+    }
+    oColor = vec4(c.rgb, 1.0);
+}
+)";
+
 bool GLRenderer::Init()
 {
     assert(glEnable != nullptr);
@@ -73,6 +189,59 @@ bool GLRenderer::Init()
                                               {{"vPosition", 0}},
                                               {{"oTopColor", 0}, {"oBottomColor", 1}}))
         return false;
+
+    if (!OpenGL::CompileVertexFragmentProgram(EdgeRowsShader,
+                                              kFinalPassVS, kWideEdgeRowsFS,
+                                              "WideEdgeRowsShader",
+                                              {{"vPosition", 0}},
+                                              {{"oColor", 0}}))
+        return false;
+    glUseProgram(EdgeRowsShader);
+    glUniform1i(glGetUniformLocation(EdgeRowsShader, "OBJTex"), 1);
+
+    glGenTextures(1, &EdgeRowsTex);
+    glBindTexture(GL_TEXTURE_2D, EdgeRowsTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, 1, 192, 0, GL_RED, GL_FLOAT, nullptr);
+    glGenFramebuffers(1, &EdgeRowsFB);
+    glBindFramebuffer(GL_FRAMEBUFFER, EdgeRowsFB);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, EdgeRowsTex, 0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (!OpenGL::CompileVertexFragmentProgram(PieceShader,
+                                              kFinalPassVS, kWidePieceFS,
+                                              "WidePieceShader",
+                                              {{"vPosition", 0}},
+                                              {{"oColor", 0}}))
+        return false;
+    glUseProgram(PieceShader);
+    glUniform1i(glGetUniformLocation(PieceShader, "FrameTex"), 3);
+    glUniform1i(glGetUniformLocation(PieceShader, "OBJTex"), 1);
+
+    glGenTextures(1, &PieceTex);
+    glBindTexture(GL_TEXTURE_2D, PieceTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, PieceWidth, 192, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glGenFramebuffers(1, &PieceFB);
+    glBindFramebuffer(GL_FRAMEBUFFER, PieceFB);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, PieceTex, 0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    glGenTextures(NumBackdrops, BackdropTex);
+    for (GLuint tex : BackdropTex)
+    {
+        glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, BackdropWidth, 192, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    }
+    glGenFramebuffers(1, &BackdropFB);
 
     if (!OpenGL::CompileVertexFragmentProgram(CaptureShader,
                                               kCaptureVS, kCaptureFS,
@@ -246,6 +415,14 @@ bool GLRenderer::Init()
 GLRenderer::~GLRenderer()
 {
     glDeleteProgram(FPShader);
+    glDeleteTextures(NumBackdrops, BackdropTex);
+    glDeleteFramebuffers(1, &BackdropFB);
+    glDeleteProgram(PieceShader);
+    glDeleteTextures(1, &PieceTex);
+    glDeleteFramebuffers(1, &PieceFB);
+    glDeleteProgram(EdgeRowsShader);
+    glDeleteTextures(1, &EdgeRowsTex);
+    glDeleteFramebuffers(1, &EdgeRowsFB);
     glDeleteProgram(CaptureShader);
     glDeleteProgram(CapDownShader);
 
@@ -568,6 +745,95 @@ void GLRenderer::RenderScreen(int ystart, int yend)
         glUniform1i(glGetUniformLocation(FPShader, "WideInputTex"), 3);
         glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_2D, OutputTex3D);
+
+        // A text BG layer that the 2D engine alpha-blends onto the 3D from in
+        // front of it covers the scene itself (cloud shadows, fog, a rain
+        // tint), so it continues into the expanded view's sides. Text boxes
+        // and other interface layers aren't blended onto the 3D like this.
+        int overlay = -1;
+        const GPU2D& unitA = GPU.GPU2D_A;
+        auto* rend2DA = dynamic_cast<GLRenderer2D*>(Rend2D_A.get());
+        if (WideMelon::Enabled() && rend2DA && ((unitA.BlendCnt >> 6) & 3) == 1 && (unitA.BlendCnt & (1 << 8)))
+        {
+            for (int i = 1; i < 4; i++)
+            {
+                if ((unitA.BlendCnt & (1 << i)) && (DispCntA & (0x100 << i))
+                    && rend2DA->LayerConfig.uBGConfig[i].Type < 2
+                    && (unitA.BGCnt[i] & 3) < (unitA.BGCnt[0] & 3))
+                {
+                    overlay = i;
+                    break;
+                }
+            }
+        }
+        glUniform1i(glGetUniformLocation(FPShader, "uWideOverlay"), overlay >= 0);
+        if (overlay >= 0)
+        {
+            const auto& cfg = rend2DA->LayerConfig.uBGConfig[overlay];
+            glUniform1i(glGetUniformLocation(FPShader, "WideOverlayTex"), 4);
+            glActiveTexture(GL_TEXTURE4);
+            glBindTexture(GL_TEXTURE_2D, rend2DA->BGLayerTex[overlay]);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glUniform2f(glGetUniformLocation(FPShader, "uOverlaySize"), (float)cfg.Size[0], (float)cfg.Size[1]);
+            glUniform2f(glGetUniformLocation(FPShader, "uOverlayScroll"),
+                        (float)(unitA.BGXPos[overlay] & 0x1FF), (float)(unitA.BGYPos[overlay] & 0x1FF));
+            glUniform2i(glGetUniformLocation(FPShader, "uOverlayBlend"),
+                        std::min<int>(unitA.EVA, 16), std::min<int>(unitA.EVB, 16));
+        }
+
+        // Weather (rain, snow) is a crowd of small sprites the game keeps on the
+        // DS screen, so the expanded view's sides would stay dry. Its sprites
+        // (the biggest group of small, plain ones sharing a palette and priority,
+        // spread across the screen) are drawn there too: where they are, and
+        // again a screen's width over, so the sides get as many as the middle.
+        int weather = 0;
+        if (WideMelon::Enabled() && rend2DA && (DispCntA & (1 << 12)))
+        {
+            struct Group { u32 pal, prio, type; int count, minX, maxX; };
+            std::vector<Group> groups;
+            auto small = [](const GLRenderer2D::sSpriteConfig::sOAM& s)
+            {
+                return s.Rotscale == (u32)-1 && s.OBJMode < 2 && !s.Mosaic && s.Size[0] <= 16 && s.Size[1] <= 32;
+            };
+            const auto& oam = rend2DA->SpriteConfig.uOAM;
+            for (int i = 0; i < rend2DA->NumSprites; i++)
+            {
+                if (!small(oam[i])) continue;
+                auto g = std::find_if(groups.begin(), groups.end(), [&](const Group& g)
+                    { return g.pal == oam[i].PalOffset && g.prio == oam[i].BGPrio && g.type == oam[i].Type; });
+                if (g == groups.end()) groups.push_back({oam[i].PalOffset, oam[i].BGPrio, oam[i].Type, 0, 9999, -9999}), g = groups.end() - 1;
+                g->count++;
+                g->minX = std::min(g->minX, oam[i].Position[0]);
+                g->maxX = std::max(g->maxX, oam[i].Position[0]);
+            }
+            const Group* best = nullptr;
+            for (const Group& g : groups)
+                if (g.count >= 8 && g.maxX - g.minX >= 128 && (!best || g.count > best->count)) best = &g;
+            // drawn only where the DS shows these sprites over the 3D scene
+            if (best && best->prio <= (unitA.BGCnt[0] & 3u))
+            {
+                GLint list[64 * 4];
+                for (int i = 0; i < rend2DA->NumSprites && weather < 64; i++)
+                {
+                    const auto& s = oam[i];
+                    if (!small(s) || s.PalOffset != best->pal || s.BGPrio != best->prio || s.Type != best->type) continue;
+                    GLint* e = &list[weather++ * 4];
+                    e[0] = i;
+                    e[1] = s.Position[0];
+                    e[2] = s.Position[1];
+                    e[3] = s.Size[0] | (s.Size[1] << 8) | (s.Flip[0] ? 1 << 16 : 0) | (s.Flip[1] ? 1 << 17 : 0);
+                }
+                glUniform4iv(glGetUniformLocation(FPShader, "uWeather"), weather, list);
+                // in front of the blended layer unless that layer comes first
+                glUniform1i(glGetUniformLocation(FPShader, "uWeatherOverOverlay"),
+                            overlay < 0 || best->prio <= (unitA.BGCnt[overlay] & 3u));
+                glUniform1i(glGetUniformLocation(FPShader, "WeatherTex"), 5);
+                glActiveTexture(GL_TEXTURE5);
+                glBindTexture(GL_TEXTURE_2D, rend2DA->SpriteTex);
+            }
+        }
+        glUniform1i(glGetUniformLocation(FPShader, "uWeatherCount"), weather);
         glActiveTexture(GL_TEXTURE0);
 
         FinalPassConfig.uScaleFactor = ScaleFactor;
@@ -631,12 +897,189 @@ void GLRenderer::VBlank()
     Rend2D_B->VBlank();
 
     RenderScreen(LastLine, 192);
+    RenderWideBackdrop();
 
     if (GPU.CaptureEnable)
         DoCapture(LastCapLine, 192);
 
     LastLine = 0;
     LastCapLine = 0;
+}
+
+void GLRenderer::RenderWideBackdrop()
+{
+    // only while a battle is on: outside one nothing shows it, and finding the
+    // info bar waits for the GPU (the slots made last stay, for the way out)
+    if (!WideBackdropWanted) return;
+    // the background: engine A's lowest-priority text BG (in a battle, the scenery)
+    // a slot for this frame; the frame count goes up once the frame is done, and
+    // pictures are counted by the value after
+    const int slot = BackdropNext;
+    BackdropNext = (BackdropNext + 1) % NumBackdrops;
+    BackdropValid[slot] = false;
+    BackdropPiece[slot] = false;
+    BackdropFrame[slot] = GPU.NDS.NumFrames + 1;
+    if (!WideMelon::Enabled()) return;
+    auto* rend2DA = dynamic_cast<GLRenderer2D*>(Rend2D_A.get());
+    const GPU2D& unitA = GPU.GPU2D_A;
+    if (!rend2DA || !unitA.Enabled || unitA.ForcedBlank) return;
+    int bg = -1;
+    for (int i = 1; i < 4; i++)
+    {
+        if (!(unitA.DispCnt & (0x100 << i)) || rend2DA->LayerConfig.uBGConfig[i].Type >= 2) continue;
+        if (bg < 0 || (unitA.BGCnt[i] & 3) >= (unitA.BGCnt[bg] & 3)) bg = i;
+    }
+    if (bg < 0) return;
+
+    GLint oldViewport[4], oldDrawFB = 0, oldReadFB = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &oldDrawFB);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &oldReadFB);
+    glGetIntegerv(GL_VIEWPORT, oldViewport);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glBindBuffer(GL_ARRAY_BUFFER, FPVertexBufferID);
+    glBindVertexArray(FPVertexArrayID);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, rend2DA->OBJLayerTex);
+    glActiveTexture(GL_TEXTURE0);
+
+    // where the sprites reaching the right edge start, line by line
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, EdgeRowsFB);
+    glViewport(0, 0, 1, 192);
+    glUseProgram(EdgeRowsShader);
+    glUniform1i(glGetUniformLocation(EdgeRowsShader, "uScale"), ScaleFactor);
+    glDrawArrays(GL_TRIANGLES, 0, 2*3);
+    float rows[192];
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, EdgeRowsFB);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glReadPixels(0, 0, 1, 192, GL_RED, GL_FLOAT, rows);
+
+    // runs of lines with sprites at the edge, each as where its lines start
+    struct Run { int top; std::vector<float> starts; };
+    std::vector<Run> runs;
+    for (int y = 0; y < 192; y++)
+    {
+        if (rows[y] < 0.f) continue;
+        if (runs.empty() || runs.back().top + (int)runs.back().starts.size() != y) runs.push_back({y, {}});
+        runs.back().starts.push_back(rows[y]);
+    }
+    auto find = [&](const std::vector<float>& shape) -> const Run*
+    {
+        for (const Run& r : runs) if (!shape.empty() && r.starts == shape) return &r;
+        return nullptr;
+    };
+
+    // the bar: a box with a straight left side (8 lines or more), its pointed end
+    // sticking out past that by less than the piece is wide, keeping its shape and
+    // only bobbing; one that has held it for half a second has stopped (a trainer
+    // or anything else sliding past never does), and its end is taken from it
+    auto isBar = [](const std::vector<float>& s)
+    {
+        if (s.size() < 8 || s.size() > 64) return false;
+        float side = -1.f;
+        size_t best = 0;
+        for (size_t i = 0, j; i < s.size(); i = j)
+        {
+            for (j = i; j < s.size() && s[j] == s[i]; j++) {}
+            if (j - i > best) best = j - i, side = s[i];
+        }
+        if (best < 8 || side < 64.f || side >= 248.f) return false;
+        bool end = false;
+        for (float x : s)
+        {
+            if (x > side + 2.f || x < side - (float)(PieceWidth - 4)) return false;
+            end |= x < side;
+        }
+        return end;
+    };
+    if (find(BarRows)) BarFrames++;
+    else
+    {
+        BarRows.clear();
+        BarFrames = 0;
+        for (const Run& r : runs)
+            if (isBar(r.starts))
+            {
+                BarRows = r.starts;
+                break;
+            }
+    }
+    if (BarFrames >= 30)
+    {
+        RestingScrollX = unitA.BGXPos[bg] & 0x1FF;
+        RestingScrollY = unitA.BGYPos[bg] & 0x1FF;
+    }
+    if (BarFrames >= 30 && BarRows != PieceRows)
+    {
+        const Run* r = find(BarRows);
+        PieceRows = BarRows;
+        PieceColumn = *std::max_element(PieceRows.begin(), PieceRows.end());
+        PieceTop = r->top;
+        PieceBottom = r->top + (int)r->starts.size() - 1;
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, PieceFB);
+        glViewport(0, 0, PieceWidth, 192);
+        glUseProgram(PieceShader);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, FPOutputTex[BackBuffer]);
+        glActiveTexture(GL_TEXTURE0);
+        glUniform1i(glGetUniformLocation(PieceShader, "uScale"), ScaleFactor);
+        glUniform1i(glGetUniformLocation(PieceShader, "uSide"), (ScreenW / ScaleFactor - 256) / 2);
+        glUniform1i(glGetUniformLocation(PieceShader, "uColumn"), (int)PieceColumn);
+        glUniform2i(glGetUniformLocation(PieceShader, "uRows"), r->top, r->top + (int)r->starts.size() - 1);
+        glUniform1fv(glGetUniformLocation(PieceShader, "uStarts"), (GLsizei)r->starts.size(), r->starts.data());
+        glDrawArrays(GL_TRIANGLES, 0, 2*3);
+    }
+    const Run* piece = find(PieceRows);
+    BackdropPiece[slot] = piece != nullptr;
+    BackdropShift[slot] = piece ? piece->top - PieceTop : 0;
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, BackdropFB);
+    glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, BackdropTex[slot], 0, 0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glViewport(0, 0, BackdropWidth, 192);
+    // the screen's own compositing carried on past its edge, so the scenery
+    // scrolls, blends and fades with it; under the art it is filled from the
+    // scenery as it rests
+    rend2DA->RenderWing(256, BackdropWidth, bg, RestingScrollX, RestingScrollY,
+                        (float)(256 + (ScreenW / ScaleFactor - 256) / 2),
+                        (GPU.MasterBrightnessA >> 14) & 0x3, std::min(GPU.MasterBrightnessA & 0x1F, 16));
+    glViewport(oldViewport[0], oldViewport[1], oldViewport[2], oldViewport[3]);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, oldDrawFB);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, oldReadFB);
+    BackdropValid[slot] = true;
+}
+
+GLRenderer::WideBackdrop GLRenderer::GetWideBackdrop(double frame) const
+{
+    // the slot made for the frame nearest the one shown; on a tie, the newer
+    const long long want = std::llround(frame);
+    int best = -1;
+    long long bestDist = 0;
+    for (int i = 0; i < NumBackdrops; i++)
+    {
+        if (!BackdropValid[i]) continue;
+        const long long dist = std::llabs((long long)BackdropFrame[i] - want);
+        if (best < 0 || dist < bestDist || (dist == bestDist && BackdropFrame[i] > BackdropFrame[best]))
+            best = i, bestDist = dist;
+    }
+    WideBackdrop out;
+    if (best < 0) return out;
+    out.Tex = BackdropTex[best];
+    if (BackdropPiece[best])
+    {
+        out.Piece = PieceTex;
+        out.PieceColumn = PieceColumn;
+        out.PieceRows[0] = PieceTop;
+        out.PieceRows[1] = PieceBottom;
+        // where the bar is in that frame and in the frame on the picture's other side
+        out.PieceShift[0] = out.PieceShift[1] = BackdropShift[best];
+        const u32 other = frame >= (double)BackdropFrame[best] ? BackdropFrame[best] + 1 : BackdropFrame[best] - 1;
+        for (int i = 0; i < NumBackdrops; i++)
+            if (BackdropValid[i] && BackdropPiece[i] && BackdropFrame[i] == other)
+                out.PieceShift[1] = BackdropShift[i];
+    }
+    return out;
 }
 
 void GLRenderer::VBlankEnd()

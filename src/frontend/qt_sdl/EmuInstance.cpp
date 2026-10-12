@@ -28,6 +28,7 @@
 #include <utility>
 #include <fstream>
 
+#include <QDir>
 #include <QDateTime>
 #include <QMessageBox>
 
@@ -37,6 +38,7 @@
 #endif
 #include "EmuInstance.h"
 #include "Config.h"
+#include "SaveSync.h"
 #include "Platform.h"
 #include "Net.h"
 #include "MPInterface.h"
@@ -1900,6 +1902,10 @@ bool EmuInstance::loadROM(QStringList filepath, bool reset, QString& errorstr)
     std::string origsav = savname;
     savname += instanceFileSuffix();
 
+    // WideMelon: with save sync, both save locations hold the newer save first
+    const WideMelon::SaveSyncSettings saveSync = WideMelon::LoadSaveSyncSettings();
+    WideMelon::SyncSavesForLoad(savname, saveSync);
+
     FileHandle* sav = Platform::OpenFile(savname, FileMode::Read);
     if (!sav)
     {
@@ -1982,6 +1988,10 @@ bool EmuInstance::loadROM(QStringList filepath, bool reset, QString& errorstr)
 
     cartType = 0;
     ndsSave = std::make_unique<SaveManager>(savname);
+    if (saveSync.Enabled)
+        ndsSave->SetSync(WideMelon::SecondSavePath(savname, saveSync),
+                         QDir(saveSync.BackupFolder).filePath("Save Location 1"),
+                         QDir(saveSync.BackupFolder).filePath("Save Location 2"));
 
     return true; // success
 }

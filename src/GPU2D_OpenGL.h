@@ -224,6 +224,9 @@ private:
     void RenderSprites(bool window, int ystart, int yend);
 
     void RenderScreen(int ystart, int yend);
+    // WideMelon: composites x uWingX .. +span past the right edge into the bound
+    // framebuffer, one DS pixel per pixel (see 2DCompositorFS)
+    void RenderWing(int x, int span, int fillBG, int fillScrollX, int fillScrollY, float end3D, int brightMode, int brightFactor);
 };
 
 }

@@ -17,7 +17,13 @@
 */
 
 #include <stdio.h>
+#include <QCheckBox>
+#include <QDir>
 #include <QFileDialog>
+#include <QGroupBox>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QMessageBox>
 #include <QTemporaryFile>
 
@@ -55,6 +61,34 @@ PathSettingsDialog::PathSettingsDialog(QWidget* parent) : QDialog(parent), ui(ne
         ui->lblInstanceNum->setText(QString("Configuring paths for instance %1").arg(inst+1));
     else
         ui->lblInstanceNum->hide();
+
+    // WideMelon: a second save location kept in sync with the first
+    auto savesBox = new QGroupBox("Second save location");
+    auto savesLayout = new QGridLayout(savesBox);
+    saveSync = new QCheckBox("Keep saves in two locations in sync");
+    saveSync->setToolTip("Location 1 is the save files path above (or the ROM's folder). When a game loads, the newer "
+                         "save of the two is used and copied over the older one, and every save is written to both, "
+                         "so you can move between WideMelon and an R4 card's SD card. If location 2 isn't there, saves "
+                         "just go to location 1. Replaced saves are kept in the Backups folder (Bak1 is the newest, up to Bak5).");
+    secondSaveFolder = new QLineEdit;
+    secondSaveFolder->setPlaceholderText("For example the game folder on your SD card");
+    secondSaveFolder->setClearButtonEnabled(true);
+    auto browse = new QPushButton("Browse...");
+    savesLayout->addWidget(saveSync, 0, 0, 1, 3);
+    savesLayout->addWidget(new QLabel("Save location 2:"), 1, 0);
+    savesLayout->addWidget(secondSaveFolder, 1, 1);
+    savesLayout->addWidget(browse, 1, 2);
+    ui->gridLayout->addWidget(savesBox, 5, 0, 1, 3);
+    connect(browse, &QPushButton::clicked, this, [this]
+    {
+        QString dir = QFileDialog::getExistingDirectory(this, "Select save location 2...", secondSaveFolder->text());
+        if (!dir.isEmpty()) secondSaveFolder->setText(QDir::toNativeSeparators(dir));
+    });
+
+    auto global = Config::GetGlobalTable();
+    saveSync->setChecked(global.GetBool("WideMelon.SaveSync"));
+    secondSaveFolder->setText(global.GetQString("WideMelon.SecondSaveFolder"));
+    saveSync->setProperty("user_originalValue", saveSync->isChecked());
 
 #define SET_ORIGVAL(type, val) \
     for (type* w : findChildren<type*>(nullptr)) \
@@ -97,6 +131,7 @@ void PathSettingsDialog::done(int r)
         }
 
         CHECK_ORIGVAL(QLineEdit, text);
+        CHECK_ORIGVAL(QCheckBox, isChecked);
 
 #undef CHECK_ORIGVAL
 
@@ -112,6 +147,10 @@ void PathSettingsDialog::done(int r)
             cfg.SetQString("SaveFilePath", ui->txtSaveFilePath->text());
             cfg.SetQString("SavestatePath", ui->txtSavestatePath->text());
             cfg.SetQString("CheatFilePath", ui->txtCheatFilePath->text());
+
+            auto global = Config::GetGlobalTable();
+            global.SetBool("WideMelon.SaveSync", saveSync->isChecked());
+            global.SetQString("WideMelon.SecondSaveFolder", secondSaveFolder->text().trimmed());
 
             Config::Save();
 

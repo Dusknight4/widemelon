@@ -20,6 +20,10 @@
 #include <string.h>
 
 #include "SaveManager.h"
+#include "SaveSync.h"
+
+#include <QDir>
+#include <QFileInfo>
 #include "Platform.h"
 
 using namespace melonDS;
@@ -179,16 +183,25 @@ void SaveManager::FlushSecondaryBuffer(u8* dst, u32 dstLength)
     }
     else
     {
-        FileHandle* f = Platform::OpenFile(Path, FileMode::Write);
-        if (f)
-        {
-            FileWrite(SecondaryBuffer.get(), SecondaryBufferLength, 1, f);
+        if (WideMelon::WriteSave(Path, SecondaryBuffer.get(), SecondaryBufferLength, Backups1))
             Log(LogLevel::Info, "SaveManager: Wrote %u bytes to %s\n", SecondaryBufferLength, Path.c_str());
-            CloseFile(f);
-        }
+
+        // WideMelon: the second save location, if it's there (an SD card may not be)
+        if (!MirrorPath.empty() && QFileInfo(QString::fromStdString(MirrorPath)).dir().exists()
+            && WideMelon::WriteSave(MirrorPath, SecondaryBuffer.get(), SecondaryBufferLength, Backups2))
+            Log(LogLevel::Info, "SaveManager: Wrote %u bytes to %s\n", SecondaryBufferLength, MirrorPath.c_str());
     }
     PreviousFlushVersion = FlushVersion;
     TimeAtLastFlushRequest = 0;
+    SecondaryBufferLock->unlock();
+}
+
+void SaveManager::SetSync(const std::string& mirrorPath, const QString& backups1, const QString& backups2)
+{
+    SecondaryBufferLock->lock();
+    MirrorPath = mirrorPath;
+    Backups1 = backups1;
+    Backups2 = backups2;
     SecondaryBufferLock->unlock();
 }
 

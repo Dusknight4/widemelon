@@ -28,6 +28,7 @@
 #include <memory>
 #include <QThread>
 #include <QMutex>
+#include <QString>
 
 #include "types.h"
 
@@ -49,8 +50,14 @@ public:
     bool NeedsFlush();
     void FlushSecondaryBuffer(melonDS::u8* dst = nullptr, melonDS::u32 dstLength = 0);
 
+    // WideMelon save sync (see SaveSync.h): also write the save to mirrorPath
+    // when it can be reached, and back up the files saves replace
+    void SetSync(const std::string& mirrorPath, const QString& backups1, const QString& backups2);
+
 private:
     std::string Path;
+    std::string MirrorPath;
+    QString Backups1, Backups2;
 
     std::atomic_bool Running;
 

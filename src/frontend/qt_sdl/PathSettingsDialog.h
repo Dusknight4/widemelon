@@ -22,6 +22,9 @@
 
 #include <QDialog>
 
+class QCheckBox;
+class QLineEdit;
+
 namespace Ui { class PathSettingsDialog; }
 class PathSettingsDialog;
 
@@ -65,6 +68,10 @@ private slots:
 private:
     Ui::PathSettingsDialog* ui;
     EmuInstance* emuInstance;
+
+    // WideMelon: keep saves in a second folder (an SD card) in sync
+    QCheckBox* saveSync;
+    QLineEdit* secondSaveFolder;
 };
 
 #endif // PATHSETTINGSDIALOG_H

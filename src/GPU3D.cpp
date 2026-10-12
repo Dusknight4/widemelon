@@ -159,6 +159,7 @@ void Vertex::DoSavestate(Savestate* file) noexcept
     file->VarArray(FinalPosition, sizeof(FinalPosition));
     file->VarArray(FinalColor, sizeof(FinalColor));
     file->VarArray(HiresPosition, sizeof(HiresPosition));
+    if (!file->Saving) FineY = HiresPosition[1] << 8;   // not saved, close enough until the next frame
 }
 
 void GPU3D::ResetRenderingState() noexcept
@@ -1133,6 +1134,7 @@ void GPU3D::SubmitPolygon() noexcept
 
             vtx->HiresPosition[0] = posX & 0x1FFF;
             vtx->HiresPosition[1] = posY & 0xFFF;
+            vtx->FineY = (s32)(((((s64)(-vtx->Position[1] + w) * Viewport[5]) << 12) / (((s64)w) << 1)) + ((s64)Viewport[3] << 12)) & 0xFFFFF;
         }
     }
 

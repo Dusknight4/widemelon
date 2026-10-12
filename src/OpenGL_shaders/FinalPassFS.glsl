@@ -4,9 +4,47 @@ uniform sampler2D WideInputTex;
 uniform bool uWideScene;
 uniform float uWideRatio;
 uniform ivec2 uWideBrightness;
+// WideMelon: a BG layer alpha-blended over the 3D (cloud shadows, fog, rain
+// tint), continued into the expanded view's sides
+uniform bool uWideOverlay;
+uniform sampler2D WideOverlayTex;
+uniform vec2 uOverlaySize;
+uniform vec2 uOverlayScroll;
+uniform ivec2 uOverlayBlend;
 uniform sampler2D MainInputTexA;
 uniform sampler2D MainInputTexB;
 uniform sampler2DArray AuxInputTex;
+// WideMelon: weather sprites (rain, snow), drawn into the expanded view's sides:
+// for each, its sprite (in the pre-rendered sprite atlas), position, and size
+// and flips (width | height << 8 | hflip << 16 | vflip << 17)
+uniform int uWeatherCount;
+uniform ivec4 uWeather[64];
+uniform bool uWeatherOverOverlay;
+uniform sampler2D WeatherTex;
+
+// the weather at a DS position outside the screen, or alpha 0
+vec4 Weather(ivec2 p)
+{
+    for (int i = 0; i < uWeatherCount; i++)
+    {
+        ivec4 s = uWeather[i];
+        ivec2 size = ivec2(s.w & 0xFF, (s.w >> 8) & 0xFF);
+        // Y over 127 also counts from the top (the DS wraps it)
+        int ly = p.y - s.z;
+        if (ly < 0 || ly >= size.y) ly = p.y - (s.z & 0xFF);
+        if (ly < 0 || ly >= size.y) continue;
+        for (int o = -256; o <= 256; o += 256)
+        {
+            int lx = p.x - (s.y + o);
+            if (lx < 0 || lx >= size.x) continue;
+            ivec2 t = ivec2(((s.w & (1 << 16)) != 0) ? size.x - 1 - lx : lx,
+                            ((s.w & (1 << 17)) != 0) ? size.y - 1 - ly : ly);
+            vec4 c = texelFetch(WeatherTex, ivec2((s.x & 0xF) * 64, (s.x >> 4) * 64) + t, 0);
+            if (c.a > 0.0) return c;
+        }
+    }
+    return vec4(0.0);
+}
 
 layout(std140) uniform ubFinalPassConfig
 {
@@ -51,7 +89,26 @@ void main()
     ivec4 col_sub = ivec4(texture(MainInputTexB, nativeCoord, 0) * 255.0) >> 2;
     if (wing) {
         col_main = uWideScene ? ivec4(texture(WideInputTex, fTexcoord.xy) * 255.0) >> 2 : ivec4(0);
+        vec4 weather = vec4(0.0);
+        if (uWideScene && uWeatherCount > 0)
+            weather = Weather(ivec2(floor(vec2(nativeCoord.x * 256.0, fTexcoord.y * 192.0))));
+        if (weather.a > 0.0 && !uWeatherOverOverlay)
+            col_main.rgb = ivec3(weather.rgb * 255.0) >> 2;
         col_sub = ivec4(0);
+        if (uWideScene && uWideOverlay)
+        {
+            // the layer where it would be if the DS screen were this wide
+            // (its tile map wraps around), blended like the DS does
+            vec2 bgpos = vec2(nativeCoord.x * 256.0, fTexcoord.y * 192.0) + uOverlayScroll;
+            vec4 overlay = texture(WideOverlayTex, bgpos / uOverlaySize);
+            if (overlay.a > 0.0)
+            {
+                ivec3 o = ivec3(overlay.rgb * 255.0) >> 2;
+                col_main.rgb = min(((o * uOverlayBlend.x) + (col_main.rgb * uOverlayBlend.y) + 0x8) >> 4, ivec3(0x3F));
+            }
+        }
+        if (weather.a > 0.0 && uWeatherOverOverlay)
+            col_main.rgb = ivec3(weather.rgb * 255.0) >> 2;
         if (uWideScene && uWideBrightness.x == 2)
             col_main += (((63 - col_main) * uWideBrightness.y + 8) >> 4);
         else if (uWideScene && uWideBrightness.x == 3)

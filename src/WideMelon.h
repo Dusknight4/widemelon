@@ -32,9 +32,27 @@ inline bool Enabled()
     return Width() > 256;
 }
 
+// The battle scenery and info bar carried on beside the DS screen in the
+// battle layout (GLRenderer::RenderWideBackdrop). Still being worked on, so it
+// is off unless WIDEMELON_BATTLE_BACKDROP=1; that area is then left black.
+inline bool BattleBackdropEnabled()
+{
+    static const bool enabled = []
+    {
+        const char* value = std::getenv("WIDEMELON_BATTLE_BACKDROP");
+        return value && value[0] == '1';
+    }();
+    return enabled;
+}
+
+// Rounds down on both sides of the screen centre. Plain division rounds toward
+// zero, so left of centre it rounded the other way, and things there moved
+// unevenly against each other while the camera scrolled.
 inline int32_t ProjectX(int32_t x)
 {
-    return static_cast<int32_t>(static_cast<int64_t>(x) * 256 / Width());
+    const int64_t scaled = static_cast<int64_t>(x) * 256;
+    const int64_t width = Width();
+    return static_cast<int32_t>(scaled >= 0 ? scaled / width : -((-scaled + width - 1) / width));
 }
 
 }

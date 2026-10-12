@@ -19,6 +19,7 @@
 #include "MPInterface.h"
 #include "LocalMP.h"
 #include "LAN.h"
+#include "SimMP.h"
 
 namespace melonDS
 {
@@ -50,7 +51,9 @@ void MPInterface::Set(MPInterfaceType type)
     switch (type)
     {
     case MPInterface_Local:
-        Current = std::make_unique<LocalMP>();
+        // WideMelon: over a simulated network, when the MP test launcher asks
+        if (SimMP::Wanted()) Current = std::make_unique<SimMP>();
+        else Current = std::make_unique<LocalMP>();
         break;
 
     case MPInterface_LAN:

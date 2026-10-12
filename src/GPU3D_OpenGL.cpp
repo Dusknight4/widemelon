@@ -350,6 +350,9 @@ void GLRenderer3D::SetRenderSettings(int scale, bool betterpolygons, bool closes
 
     ScreenW = WideMelon::Width() * scale;
     ScreenH = 192 * scale;
+    SubpixelY = 5;
+    while (SubpixelY > 0 && ((ScreenH + 8) << SubpixelY) > 0xFFFF)
+        SubpixelY--;
 
     glBindTexture(GL_TEXTURE_2D, ColorBufferTex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ScreenW, ScreenH, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
@@ -430,16 +433,21 @@ void GLRenderer3D::VertexPosition(const Vertex* vtx, u32& x, u32& y) const
     if (ScaleFactor > 1)
     {
         x = (vtx->HiresPosition[0] * ScaleFactor) >> 4;
-        y = (vtx->HiresPosition[1] * ScaleFactor) >> 4;
+        // WideMelon: Y in 1/(1 << SubpixelY) pixels, from the precise Y
+        y = (u32)((((s64)vtx->FineY * ScaleFactor << SubpixelY) + (1 << 11)) >> 12);
     }
     else
     {
         x = vtx->FinalPosition[0];
-        y = vtx->FinalPosition[1];
+        y = vtx->FinalPosition[1] << SubpixelY;
     }
 
     if (WideMelon::Enabled())
-        x = (static_cast<uint64_t>(vtx->HiresPosition[0]) * ScaleFactor * WideMelon::Width()) / (16 * 256);
+    {
+        // nearest whole pixel: rounding down put 3D a pixel left of 2D sprites drawn
+        // at the same DS position (the battle Pokemon swap between the two)
+        x = (static_cast<uint64_t>(vtx->HiresPosition[0]) * ScaleFactor * WideMelon::Width() + (16 * 256) / 2) / (16 * 256);
+    }
 }
 
 // WideMelon: the DS rasterizer fills pixels that polygon edges only touch, which
@@ -457,7 +465,7 @@ void GLRenderer3D::SeamOffsets(const Polygon* poly, s32 offsets[10][2]) const
         u32 x, y;
         VertexPosition(poly->Vertices[i], x, y);
         px[i] = (float)x;
-        py[i] = (float)y;
+        py[i] = (float)y / (1 << SubpixelY);   // in pixels, like x
         offsets[i][0] = offsets[i][1] = 0;
     }
     for (u32 i = 0; i < nverts; i++)
@@ -494,7 +502,7 @@ void GLRenderer3D::SeamOffsets(const Polygon* poly, s32 offsets[10][2]) const
         else               { ox = ax + bx; oy = ay + by; } // very sharp corner, limit the spike
 
         offsets[i][0] = (s32)std::lround(ox);
-        offsets[i][1] = (s32)std::lround(oy);
+        offsets[i][1] = (s32)std::lround(oy) * (1 << SubpixelY);
     }
 }
 
@@ -757,7 +765,7 @@ void GLRenderer3D::BuildPolygons(GLRenderer3D::RendererPolygon* polygons, int np
                     Vertex* vtx = poly->Vertices[j];
 
                     cX += vtx->HiresPosition[0];
-                    cY += vtx->HiresPosition[1];
+                    cY += vtx->FineY;
 
                     float fw = (float)poly->FinalW[j] * poly->NumVertices;
                     cW += 1.0f / fw;
@@ -788,8 +796,8 @@ void GLRenderer3D::BuildPolygons(GLRenderer3D::RendererPolygon* polygons, int np
                 cS *= cW;
                 cT *= cW;
 
-                cX = (static_cast<uint64_t>(cX) * ScaleFactor * WideMelon::Width()) / (16 * 256);
-                cY = (cY * ScaleFactor) >> 4;
+                cX = (static_cast<uint64_t>(cX) * ScaleFactor * WideMelon::Width() + (16 * 256) / 2) / (16 * 256);
+                cY = (u32)((((s64)cY * ScaleFactor << SubpixelY) + (1 << 11)) >> 12);
 
                 u32 w = (u32)cW;
 
@@ -1419,7 +1427,7 @@ void GLRenderer3D::RenderFrame()
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, MainFramebuffer);
 
     ShaderConfig.uScreenSize[0] = ScreenW;
-    ShaderConfig.uScreenSize[1] = ScreenH;
+    ShaderConfig.uScreenSize[1] = ScreenH << SubpixelY;   // vertex Y arrives in sub-pixels
     ShaderConfig.uDispCnt = GPU3D.RenderDispCnt;
 
     for (int i = 0; i < 32; i++)

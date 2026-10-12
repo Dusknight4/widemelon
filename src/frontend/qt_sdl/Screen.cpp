@@ -40,6 +40,7 @@
 #include "GPU.h"
 #include "GPU3D_Soft.h"
 #include "GPU3D_OpenGL.h"
+#include "GPU_OpenGL.h"
 #include "Platform.h"
 #include "Config.h"
 
@@ -1014,6 +1015,20 @@ void ScreenPanelGL::initOpenGL()
     screenShaderScreenSizeULoc = glGetUniformLocation(screenShaderProgram, "uScreenSize");
     screenShaderTransformULoc = glGetUniformLocation(screenShaderProgram, "uTransform");
 
+    // WideMelon: the battle scenery beside the DS picture, and the info bar's end over it
+    OpenGL::CompileVertexFragmentProgram(wingShaderProgram,
+                                         kScreenVS, melonDS::GLRenderer::WideWingFS,
+                                         "WideWingShader",
+                                         {{"vPosition", 0}, {"vTexcoord", 1}},
+                                         {{"oColor", 0}});
+    glUseProgram(wingShaderProgram);
+    glUniform1i(glGetUniformLocation(wingShaderProgram, "ScreenTex"), 0);
+    glUniform1i(glGetUniformLocation(wingShaderProgram, "ShownTex"), 1);
+    glUniform1i(glGetUniformLocation(wingShaderProgram, "PieceTex"), 2);
+    wingScreenSizeULoc = glGetUniformLocation(wingShaderProgram, "uScreenSize");
+    wingTransformULoc = glGetUniformLocation(wingShaderProgram, "uTransform");
+    glUseProgram(screenShaderProgram);
+
     const float vertices[] =
     {
         0.f,   0.f,    0.f, 0.f, 0.f,
@@ -1041,6 +1056,33 @@ void ScreenPanelGL::initOpenGL()
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5*4, (void*)(0));
     glEnableVertexAttribArray(1); // texcoord
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5*4, (void*)(2*4));
+
+    // WideMelon: the battle scenery past the DS screen's right edge, in the top
+    // screen's units (its 256 span the whole expanded view)
+    {
+        const float wide = (float)WideMelon::Width();
+        const float side = (wide - 256.f) / 2.f;
+        const float x0 = (256.f + side) * 256.f / wide;
+        const float x1 = (256.f + melonDS::GLRenderer::BackdropWidth + side) * 256.f / wide;
+        const float backdrop[] =
+        {
+            x0, 0.f,    0.f, 0.f, 0.f,
+            x0, 192.f,  0.f, 1.f, 0.f,
+            x1, 192.f,  1.f, 1.f, 0.f,
+            x0, 0.f,    0.f, 0.f, 0.f,
+            x1, 192.f,  1.f, 1.f, 0.f,
+            x1, 0.f,    1.f, 0.f, 0.f,
+        };
+        glGenBuffers(1, &backdropVertexBuffer);
+        glBindBuffer(GL_ARRAY_BUFFER, backdropVertexBuffer);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(backdrop), backdrop, GL_STATIC_DRAW);
+        glGenVertexArrays(1, &backdropVertexArray);
+        glBindVertexArray(backdropVertexArray);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5*4, (void*)(0));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5*4, (void*)(2*4));
+    }
 
     glGenTextures(1, &screenTexture);
     glActiveTexture(GL_TEXTURE0);
@@ -1149,10 +1191,13 @@ void ScreenPanelGL::deinitOpenGL()
     phoneCaptureMapWarned = false;
     phoneFramePacer.reset();
 
+    glDeleteVertexArrays(1, &backdropVertexArray);
+    glDeleteBuffers(1, &backdropVertexBuffer);
     glDeleteVertexArrays(1, &screenVertexArray);
     glDeleteBuffers(1, &screenVertexBuffer);
 
     glDeleteProgram(screenShaderProgram);
+    glDeleteProgram(wingShaderProgram);
 
 
     for (const auto& [key, tex] : osdTextures)
@@ -1298,11 +1343,48 @@ void ScreenPanelGL::drawScreen()
 
         float matrices[kMaxScreenTransforms][6];
         blendedScreenMatrices(matrices);
-        for (int i = 0; i < numScreens; i++)
-        {
-            glUniformMatrix2x3fv(screenShaderTransformULoc, 1, GL_TRUE, matrices[i]);
-            glDrawArrays(GL_TRIANGLES, screenKind[i] == 0 ? 0 : 2 * 3, 2 * 3);
-        }
+
+        // WideMelon: in the battle layout, the battle scenery continues past the DS
+        // picture's right edge, where it would otherwise be black
+        melonDS::GLRenderer::WideBackdrop backdrop;
+        if (battleBlend > 0.f)
+            if (auto* gl = dynamic_cast<melonDS::GLRenderer*>(&nds->GPU.GetRenderer()))
+                backdrop = gl->GetWideBackdrop(shownFrame);
+
+        // the top screen and the scenery beside it, then the bottom screen over them
+        for (int pass = 0; pass < 2; pass++)
+            for (int i = 0; i < numScreens; i++)
+            {
+                if ((screenKind[i] == 0) != (pass == 0)) continue;
+                glUniformMatrix2x3fv(screenShaderTransformULoc, 1, GL_TRUE, matrices[i]);
+                glDrawArrays(GL_TRIANGLES, screenKind[i] == 0 ? 0 : 2 * 3, 2 * 3);
+                if (pass == 0 && backdrop.Tex && wingShaderProgram)
+                {
+                    const float wide = (float)WideMelon::Width();
+                    glUseProgram(wingShaderProgram);
+                    glUniform2f(wingScreenSizeULoc, w / factor, h / factor);
+                    glUniformMatrix2x3fv(wingTransformULoc, 1, GL_TRUE, matrices[i]);
+                    glUniform1i(glGetUniformLocation(wingShaderProgram, "uPiece"), backdrop.Piece != 0);
+                    glUniform1f(glGetUniformLocation(wingShaderProgram, "uColumn"), backdrop.PieceColumn);
+                    glUniform2i(glGetUniformLocation(wingShaderProgram, "uShift"), backdrop.PieceShift[0], backdrop.PieceShift[1]);
+                    glUniform2i(glGetUniformLocation(wingShaderProgram, "uRows"), backdrop.PieceRows[0], backdrop.PieceRows[1]);
+                    glUniform1f(glGetUniformLocation(wingShaderProgram, "uSide"), (wide - 256.f) / 2.f);
+                    glUniform1f(glGetUniformLocation(wingShaderProgram, "uWide"), wide);
+                    glActiveTexture(GL_TEXTURE2);
+                    glBindTexture(GL_TEXTURE_2D, backdrop.Piece);
+                    glActiveTexture(GL_TEXTURE1);
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, displayTexture);
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, backdrop.Tex);
+                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, filter);
+                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, filter);
+                    glBindVertexArray(backdropVertexArray);
+                    glDrawArrays(GL_TRIANGLES, 0, 2 * 3);
+                    glBindVertexArray(screenVertexArray);
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, displayTexture);
+                    glUseProgram(screenShaderProgram);
+                }
+            }
 
         screenSettingsLock.unlock();
     }
@@ -1401,6 +1483,7 @@ void ScreenPanelGL::drawScreen()
 
 GLuint ScreenPanelGL::smoothFrame(melonDS::NDS* nds, GLuint source)
 {
+    shownFrame = (double)nds->NumFrames;
     if (!emuInstance->presentSmoothed || interpolatorFailed)
     {
         if (smoothingActive && interpolator)
@@ -1433,6 +1516,7 @@ GLuint ScreenPanelGL::smoothFrame(melonDS::NDS* nds, GLuint source)
     // half a frame for 60 fps games at 120 Hz.
     const double delay = std::max(0.0, interpolator->ContentPeriod() - 1.0 / emuInstance->presentSubframes);
     const GLuint output = interpolator->Output(nds->NumFrames + emuInstance->presentPhase - delay);
+    if (output) shownFrame = nds->NumFrames + emuInstance->presentPhase - delay;
     return output ? output : source;
 }
 

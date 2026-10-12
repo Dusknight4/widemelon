@@ -51,6 +51,20 @@ layout(std140) uniform ubCompositorConfig
 
 uniform int uScaleFactor;
 
+// WideMelon: compositing the part past the screen's right edge (uWingX != 0, see
+// 2DCompositorVS). There are no sprites there; the 3D image ends at uWing3DEnd
+// and carries on reflected (in a battle it only reaches there in effects, like
+// the grass of the intro, whose blades then run on unbroken); and where layer uWingFill (the scenery) has no art, below it, the art just
+// above is copied down, from where the layer rests (uWingFillScroll) so nothing
+// sliding by is copied. Master brightness (uWingBright: mode, factor) is applied
+// here, as the final pass does for the screen.
+uniform int uWingX;
+uniform int uWingFill;
+uniform vec2 uWingFillScroll;
+uniform float uWing3DEnd;
+uniform ivec2 uWingBright;
+uniform int uWingLayers;    // the BG layers drawn there (the others are the screen's own: text boxes)
+
 smooth in vec4 fTexcoord;
 
 out vec4 oColor;
@@ -209,6 +223,30 @@ vec4 BG3CalcAndFetch(vec2 coord, int line)
     return BG3Fetch(bgpos / vec2(uBGConfig[3].Size));
 }
 
+
+vec4 TextBGFetch(int bg, vec2 bgpos)
+{
+    vec2 coord = bgpos / vec2(uBGConfig[bg].Size);
+    if (bg == 1) return BG1Fetch(coord);
+    if (bg == 2) return BG2Fetch(coord);
+    if (bg == 3) return BG3Fetch(coord);
+    return BG0Fetch(coord);
+}
+
+vec4 WingFill(int bg, int x, int line)
+{
+    for (int k = 1; k < 192; k++)
+    {
+        int y = line - k;
+        if (y < 0) break;
+        if (TextBGFetch(bg, vec2(x, y) + uWingFillScroll).a > 0)
+        {
+            int edge = y + 1;   // the first line without art
+            return TextBGFetch(bg, vec2(x, max(line - (192 - edge), 0)) + uWingFillScroll);
+        }
+    }
+    return vec4(0);
+}
 void CalcSpriteMosaic(in ivec2 coord, out ivec4 objflags, out vec4 objcolor)
 {
     for (int i = 0; i < 16; i++)
@@ -252,7 +290,8 @@ vec4 CompositeLayers()
     int xpos = int(fTexcoord.x);
     int line = int(fTexcoord.y);
 
-    if (uScanline[line].MosaicSize.x > 0)
+    bool wing = uWingX != 0;
+    if (uScanline[line].MosaicSize.x > 0 && !wing)
         MosaicX = texelFetch(MosaicTex, ivec2(bgcoord.x, uScanline[line].MosaicSize.x), 0).r;
 
     ivec4 col1 = ivec4(ConvertColor(uScanline[line].BackColor), 0x20);
@@ -266,9 +305,23 @@ vec4 CompositeLayers()
     layercol[1] = BG1CalcAndFetch(bgcoord, line);
     layercol[2] = BG2CalcAndFetch(bgcoord, line);
     layercol[3] = BG3CalcAndFetch(bgcoord, line);
+    if (wing)
+    {
+        for (int i = 0; i < 4; i++)
+            if ((uWingLayers & (1 << i)) == 0) layercol[i] = vec4(0);
+        if (uEnable3D && bgcoord.x >= uWing3DEnd && (uWingLayers & 1) != 0)
+            layercol[0] = BG0CalcAndFetch(vec2(2.0 * uWing3DEnd - bgcoord.x, bgcoord.y), line);
+        if (uWingFill >= 0 && layercol[uWingFill].a == 0)
+            layercol[uWingFill] = WingFill(uWingFill, xpos, line);
+    }
 
     ivec4 objflags;
-    if (uScanline[line].MosaicSize.z > 0)
+    if (wing)
+    {
+        layercol[4] = vec4(0);
+        objflags = ivec4(0);
+    }
+    else if (uScanline[line].MosaicSize.z > 0)
     {
         CalcSpriteMosaic(ivec2(fTexcoord.xy), objflags, layercol[4]);
     }
@@ -392,6 +445,11 @@ vec4 CompositeLayers()
         // 3D layer blending
         col1 = ((col1 * eva) + (col2 * evb) + 0x10) >> 5;
     }
+
+    if (wing && uWingBright.x == 1)
+        col1.rgb += ((0x3F - col1.rgb) * uWingBright.y) >> 4;
+    else if (wing && uWingBright.x == 2)
+        col1.rgb -= ((col1.rgb * uWingBright.y) + 0xF) >> 4;
 
     return vec4(vec3(col1.rgb << 2) / 255.0, 1);
 }

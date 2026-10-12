@@ -44,6 +44,7 @@ set(SOURCES_QT_SDL
     Platform_AAC.cpp
     QPathInput.h
     SaveManager.cpp
+    SaveSync.cpp
     CameraManager.cpp
     AboutDialog.cpp
     AboutDialog.h

@@ -1132,7 +1132,11 @@ void NDSCartSlot::Interface::WriteSPIData(u8 val)
     SPISelected = hold;
 
     // SPI transfers one bit per cycle -> 8 cycles per byte
-    u32 delay = 8 * (8 << (SPICnt & 0x3));
+    // (WideMelon: with fast transfers, bytes are ready at once)
+    u32 delay = Parent.FastTransfers ? 1 : 8 * (8 << (SPICnt & 0x3));
+    if (Parent.FastTransfers)
+        Parent.NDS.SkipSaveWaits();
+
     Parent.NDS.ScheduleEvent(SPITransferEvent, false, delay, 0, 0);
 }
 

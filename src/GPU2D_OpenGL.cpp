@@ -1834,6 +1834,64 @@ void GLRenderer2D::RenderScreen(int ystart, int yend)
     glDisable(GL_SCISSOR_TEST);
 }
 
+void GLRenderer2D::RenderWing(int x, int span, int fillBG, int fillScrollX, int fillScrollY, float end3D, int brightMode, int brightFactor)
+{
+    // the screen's own compositing (this frame's lines and settings, as the
+    // last RenderScreen() left them), carried on past its right edge
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+    glUseProgram(CompositorShader);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 20, LayerConfigUBO);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 22, ScanlineConfigUBO);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 23, CompositorConfigUBO);
+
+    for (int i = 0; i < 4; i++)
+    {
+        glActiveTexture(GL_TEXTURE0 + i);
+        if ((i == 0) && (DispCnt & (1<<3)))
+            glBindTexture(GL_TEXTURE_2D, Parent.OutputTex3D);
+        else
+            glBindTexture(GL_TEXTURE_2D, BGLayerTex[i]);
+        GLint wrapmode = LayerConfig.uBGConfig[i].Clamp ? GL_CLAMP_TO_BORDER : GL_REPEAT;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapmode);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapmode);
+    }
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, OBJLayerTex);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, Parent.CaptureOutput128Tex);
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, Parent.CaptureOutput256Tex);
+    glActiveTexture(GL_TEXTURE7);
+    glBindTexture(GL_TEXTURE_2D, MosaicTex);
+
+    glUniform1i(glGetUniformLocation(CompositorShader, "uWingX"), x);
+    glUniform1i(glGetUniformLocation(CompositorShader, "uWingSpan"), span);
+    glUniform1i(glGetUniformLocation(CompositorShader, "uWingFill"), fillBG);
+    glUniform2f(glGetUniformLocation(CompositorShader, "uWingFillScroll"), (float)fillScrollX, (float)fillScrollY);
+    glUniform1f(glGetUniformLocation(CompositorShader, "uWing3DEnd"), end3D);
+    glUniform2i(glGetUniformLocation(CompositorShader, "uWingBright"), brightMode, brightFactor);
+    // the layers that go on past the edge: the scenery, the 3D image, and maps
+    // wider than the screen; the others (text boxes) belong to the screen itself
+    int layers = 0;
+    for (int i = 0; i < 4; i++)
+        if (i == fillBG || (i == 0 && (DispCnt & (1<<3)))
+            || (LayerConfig.uBGConfig[i].Type < 2 && LayerConfig.uBGConfig[i].Size[0] > 256))
+            layers |= 1 << i;
+    glUniform1i(glGetUniformLocation(CompositorShader, "uWingLayers"), layers);
+
+    glBindBuffer(GL_ARRAY_BUFFER, Parent.RectVtxBuffer);
+    glBindVertexArray(Parent.RectVtxArray);
+    glDrawArrays(GL_TRIANGLES, 0, 2*3);
+
+    glUniform1i(glGetUniformLocation(CompositorShader, "uWingX"), 0);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 void GLRenderer2D::DrawSprites(u32 line)
 {
     u32 oammask = 1 << GPU2D.Num;

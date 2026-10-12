@@ -277,6 +277,8 @@ public: // TODO: Encapsulate the rest of these members
     u64 ARM7Timestamp, ARM7Target;
     u32 ARM9ClockShift;
     bool ARM9Overclock = false; // WideMelon, see SetARM9Overclock()
+    // WideMelon: whether SkipSaveWaits() has looked for the save driver yet
+    bool SaveWaitsChecked = false;
 
     u32 IME[2];
     u32 IE[2];
@@ -498,6 +500,8 @@ public: // TODO: Encapsulate the rest of these members
     void SetARM9Overclock(bool enable) noexcept;
     // Reads the game card at one bus cycle per byte instead of five or eight.
     void SetFastCartTransfers(bool enable) noexcept;
+    // With fast transfers: skips the save driver's fixed waits after each flash page write.
+    void SkipSaveWaits() noexcept;
 
 #ifdef JIT_ENABLED
     [[nodiscard]] bool IsJITEnabled() const noexcept { return EnableJIT; }

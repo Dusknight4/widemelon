@@ -161,6 +161,9 @@ private:
     bool BetterPolygons {};
     bool CloseSeams {};
     int ScreenW {}, ScreenH {};
+    // WideMelon: vertex Y goes to the GPU in 1/(1 << SubpixelY) pixels, so a polygon
+    // keeps its exact height while it scrolls by fractions of a pixel
+    int SubpixelY {};
 
     GLuint ColorBufferTex {}, DepthBufferTex {}, AttrBufferTex {};
 

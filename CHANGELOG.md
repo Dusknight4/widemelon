@@ -83,6 +83,22 @@
   with controllers SDL recognizes (Switch Pro, Xbox, PlayStation, ...) and
   leaves other controllers alone. A stick direction that has a binding of its
   own isn't mirrored. Setting: `JoystickTwinSticks` (per instance).
+- **Second save location** (Config > Path settings, off by default). Keeps a
+  game's save in two places, for example WideMelon's folder and the game
+  folder on an R4 card's SD card, so you can move between the emulator and a
+  real console. When a game loads, the newer of the two saves is used and
+  copied over the older one; every save is written to both. If the second
+  location isn't there (the card isn't inserted), saves just go to the first.
+  Saves that get replaced are kept in a Backups folder, newest first as
+  `<name> Bak1.sav` up to `Bak5`. Settings: `WideMelon.SaveSync`,
+  `WideMelon.SecondSaveFolder`.
+- **Faster saving in the Pokémon games.** The games' save driver waits a few
+  milliseconds after every flash page it writes, for a chip that is never
+  busy in emulation, which added about five seconds to each save. Like
+  nds-bootstrap, WideMelon finds that wait in the game's code and skips it.
+- **Weather in the expanded view.** Rain (and other weather made of small
+  sprites) now falls across the whole widescreen picture instead of stopping
+  at the edges of the DS screen.
 - **Single-file Windows build.** `widemelon.exe` can be built as one static
   executable of about 50 MB with MSYS2 UCRT64 and static Qt 6, with no DLLs
   or plugin folders next to it (see BUILD.md). It keeps its settings and
@@ -97,6 +113,23 @@
 - Occasional pauses and jumps while walking or running in the Pokémon games
   (see *Reduce in-game slowdown*). They were the game's own lag frames, also
   present without motion smoothing.
+- A wavy look while the camera scrolled: parts of the 3D scene moved
+  unevenly against each other, left/right because positions left of the
+  screen centre were rounded the other way, and up/down because vertical
+  positions were rounded to whole pixels. Positions are now rounded the same
+  way everywhere and kept to 1/32 of a pixel.
+- In Pokémon battles, the 3D Pokémon sat a pixel to the left of the 2D
+  sprite the game swaps it with, so it jumped sideways at the swap.
+
+### In progress
+
+- In the Overlay layout's battle view, filling the area beside the DS screen
+  with the battle scenery (and continuing the info bar) is still being
+  worked on. It is off, so that area stays black; set the environment
+  variable `WIDEMELON_BATTLE_BACKDROP=1` to try the work in progress.
+- `WIDEMELON_MP_*` environment variables run local multiplayer over a
+  simulated network with delay and jitter, for testing (see
+  `src/net/SimMP.h`). Without them, multiplayer is unchanged.
 
 ### Fixed during motion smoothing testing
 

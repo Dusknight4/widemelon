@@ -238,6 +238,47 @@ void NDS::SetARM9Overclock(bool enable) noexcept
 #endif
 }
 
+void NDS::SkipSaveWaits() noexcept
+{
+    // WideMelon: the NitroSDK's ARM7 backup driver waits after every flash page
+    // write in a helper, wait_while_busy(initial_ms, timeout_ms): it sleeps
+    // initial_ms (about 5 ms) and then polls the status register, sleeping up
+    // to 5 ms between polls while the chip reports busy. The emulated chip is
+    // never busy, so the sleeps are pure waiting: about 5 seconds per save in
+    // the Pokémon games. Like nds-bootstrap, find the helper by its code and
+    // turn its two OS_Sleep calls into no-ops; the poll loop still ends by its
+    // timeout. Only the music's alarms keep using the timers, untouched.
+    if (SaveWaitsChecked) return;
+    SaveWaitsChecked = true;
+
+    // 0 = any branch-with-link (the OS_Sleep calls)
+    static const u32 helper[] = {
+        0xE92D41F0, 0xE1A05000, 0xE1A04001, 0xE0951004, 0x0A000020, 0xE3550000, 0x0A000000, 0,
+        0xE3540000, 0x0A000012, 0xE0447005, 0xE3A04000, 0xE3A05001, 0xE3A06005, 0xEA000005, 0xE3570005,
+        0xB1A08007, 0xA1A08006, 0xE1A00008, 0,
+    };
+    constexpr u32 count = sizeof(helper) / sizeof(helper[0]);
+    for (u32 addr = 0x037F8000; addr + count * 4 <= 0x03810000; addr += 4)
+    {
+        bool match = true;
+        for (u32 i = 0; i < count && match; i++)
+        {
+            const u32 word = ARM7Read32(addr + i * 4);
+            match = helper[i] ? word == helper[i] : (word >> 24) == 0xEB;
+        }
+        if (!match) continue;
+
+        ARM7Write32(addr + 7 * 4, 0xE1A00000);  // mov r0, r0
+        ARM7Write32(addr + 19 * 4, 0xE1A00000);
+#ifdef JIT_ENABLED
+        if (EnableJIT)
+            JIT.ResetBlockCache();
+#endif
+        Log(LogLevel::Info, "WideMelon: skipping save write waits at %08X\n", addr);
+        return;
+    }
+}
+
 void NDS::SetFastCartTransfers(bool enable) noexcept
 {
     for (NDSCart::NDSCartSlot* slot : NDSCartSlots)
@@ -498,6 +539,7 @@ void NDS::Reset()
 
     ARM9Timestamp = 0; ARM9Target = 0;
     ARM7Timestamp = 0; ARM7Target = 0;
+    SaveWaitsChecked = false;
     SysTimestamp = 0;
 
     InitTimings();
@@ -749,6 +791,9 @@ bool NDS::DoSavestate(Savestate* file)
     file->Var32(&NumFrames);
     file->Var32(&NumLagFrames);
     file->Bool32(&LagFrameFlag);
+
+    if (!file->Saving)
+        SaveWaitsChecked = false; // the loaded state may have the driver unpatched
 
     if (!file->Saving && ConsoleType == 0)
     {

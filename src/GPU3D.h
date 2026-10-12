@@ -46,6 +46,9 @@ struct Vertex
     // hi-res position (4-bit fractional part)
     // TODO maybe: hi-res color? (that survives clipping)
     s32 HiresPosition[2];
+    // WideMelon: Y with a 12-bit fractional part, so a polygon keeps its exact
+    // height while it scrolls by fractions of a pixel
+    s32 FineY;
 
     void DoSavestate(Savestate* file) noexcept;
 };

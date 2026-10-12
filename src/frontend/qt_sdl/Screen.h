@@ -238,6 +238,9 @@ private:
     bool glInited;
 
     GLuint screenVertexBuffer, screenVertexArray;
+    GLuint backdropVertexBuffer = 0, backdropVertexArray = 0;   // WideMelon: battle scenery right of the DS picture
+    GLuint wingShaderProgram = 0;   // WideMelon: draws that scenery, with the end of a battle info bar cut off by the edge
+    GLint wingTransformULoc = -1, wingScreenSizeULoc = -1;
     GLuint screenTexture;
     GLuint screenShaderProgram;
     GLint screenShaderTransformULoc, screenShaderScreenSizeULoc;
@@ -273,6 +276,7 @@ private:
     bool interpolatorFailed = false;
     bool smoothingActive = false;
     GLuint smoothFrame(melonDS::NDS* nds, GLuint source);
+    double shownFrame = 0.0;   // WideMelon: the frame time of the picture shown (smoothing shows the past)
 
     void osdRenderItem(OSDItem* item) override;
     void osdDeleteItem(OSDItem* item) override;

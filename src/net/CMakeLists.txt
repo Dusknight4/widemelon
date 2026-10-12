@@ -6,6 +6,7 @@ add_library(net-utils STATIC
     Net_Slirp.cpp
     PacketDispatcher.cpp
     LocalMP.cpp
+    SimMP.cpp
     LAN.cpp
     Netplay.cpp
     MPInterface.cpp
