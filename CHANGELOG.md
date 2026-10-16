@@ -120,6 +120,56 @@
   way everywhere and kept to 1/32 of a pixel.
 - In Pokémon battles, the 3D Pokémon sat a pixel to the left of the 2D
   sprite the game swaps it with, so it jumped sideways at the swap.
+- Motion smoothing dropped to 30 fps for about half a second whenever the
+  area-name sign slid in or out (walking between a town and a route in the
+  Pokémon games). The sign moves every frame while the world moves every
+  other frame, and the whole screen was taken to be 60 fps content. Small
+  changes between a 30 fps game's images now update the newest image instead.
+- *Reduce in-game slowdown* now runs the ARM9 at twice the DSi's clock
+  (266 MHz). At the DSi clock, Platinum still dropped a frame setting up the
+  next map when walking from a route back into a town.
+  `WIDEMELON_ARM9_SHIFT=2` gives the DSi clock for comparison.
+- A stall in the OpenGL 2D renderer: each screen pass changed a buffer the
+  GPU could still be reading, so the driver waited for the GPU (over 1 ms a
+  frame when the GPU was busy, and up to 160 ms in a frame where a game
+  changes settings on every line). The passes now stream into a ring buffer.
+
+- With the JIT recompiler on Windows, the ARM9's DTCM (where DS games keep
+  their stack) was never mapped for direct access, though marked as mapped:
+  every stack access the JIT generated faulted once and was turned into a
+  slow call (about 45,000 a frame in the Pokémon overworld). It is now mapped.
+- Further OpenGL renderer buffers (layer, sprite, compositor, final pass and
+  capture settings, sprite and 3D vertices) are re-specified each time instead
+  of updated in place, so the driver never waits for the GPU; the per-line
+  settings use a persistently mapped ring buffer.
+
+### Changed
+
+- Faster emulation: about twice the frame rate of 1.0.4-mod.3 when not
+  limited to 60 fps (Pokémon Platinum overworld, JIT on, 4x scale, motion
+  smoothing: about 170 fps before, 360 fps now). Results are identical to
+  before: checked frame for frame on battles, walking and rain scenes.
+- **OpenGL on its own thread** (main window). The emulator records its OpenGL
+  calls into a queue that a render thread carries out, like Mesa's glthread:
+  calls that only pass values return at once, data is copied into the queue,
+  and only calls that return something wait. The emulation thread no longer
+  spends time in the graphics driver, and presenting a frame overlaps the
+  next one. Together with the changes below, about 2.5x the frame rate of
+  1.0.4-mod.3 when not limited to 60 fps (Pokémon Platinum overworld: about
+  170 fps before, 430 fps now), with identical pictures. Opening a second
+  window turns it off for the session; `WIDEMELON_GLTHREAD=0` turns it off.
+  The stubs are generated from glad.h by `tools/gen_glthread_stubs.py`.
+- While both CPUs wait for an interrupt and nothing else is running, the
+  emulator moves straight on to the next point where something can happen (an
+  event or a timer overflow) instead of stepping there in short slices; that
+  is 50-65% of all slices in the Pokémon games. `WIDEMELON_NOHALTSKIP=1` turns
+  it off.
+- The JIT recompiler goes from one compiled block to the next in generated
+  code, without returning to the emulator loop between blocks (as Dolphin's
+  and Citra's dispatchers do); it returns only for interrupts, halts, the end
+  of the time slice or code that isn't compiled yet. About 80% fewer trips
+  through the loop, with emulation results identical to before.
+  `WIDEMELON_JIT_NOCHAIN=1` turns it off.
 
 ### In progress
 

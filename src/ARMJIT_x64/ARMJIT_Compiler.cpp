@@ -25,6 +25,9 @@
 
 #include <assert.h>
 #include <stdarg.h>
+#include <cstdlib>
+#include <cstdio>
+#include <string>
 
 #include "../dolphin/CommonFuncs.h"
 
@@ -435,6 +438,74 @@ Compiler::Compiler(melonDS::NDS& nds) : XEmitter(), NDS(nds)
         }
     }
 
+    // WideMelon: the dispatcher, in generated code. A block ends by jumping
+    // here instead of returning to the C++ loop in ARMv5/ARMv4::Execute. It
+    // does what that loop does between blocks: adds the block's cycles to the
+    // CPU's timestamp, and while there is time left and nothing stops execution
+    // (halt, IRQ, idle loop), looks up the next block and jumps straight to it.
+    // Anything else (no block yet, another memory region) goes back to the loop.
+    // This saves the register saving and restoring, the call and the C++
+    // lookup on every block, as in Dolphin's and Citra's dispatchers.
+    for (int num = 0; num < 2; num++)
+    {
+        DispatchStub[num] = GetWritableCodePtr();
+        u64* timestamp = num == 0 ? &nds.ARM9Timestamp : &nds.ARM7Timestamp;
+        u64* target = num == 0 ? &nds.ARM9Target : &nds.ARM7Target;
+
+        // the block keeps CPSR in RCPSR; the next one expects it in memory (as ARM_Ret leaves it)
+        MOV(32, MDisp(RCPU, offsetof(ARM, CPSR)), R(RCPSR));
+        // a halt, IRQ or idle loop goes back with the cycles not yet added: the
+        // loop handles those first (an idle loop drops them and skips to the target)
+        CMP(32, MDisp(RCPU, offsetof(ARM, StopExecution)), Imm8(0));
+        FixupBranch stop = J_CC(CC_NZ, true);
+        MOVSX(64, 32, RSCRATCH, MDisp(RCPU, offsetof(ARM, Cycles)));
+        MOV(64, R(RSCRATCH2), ImmPtr(timestamp));
+        ADD(64, MatR(RSCRATCH2), R(RSCRATCH));
+        MOV(32, MDisp(RCPU, offsetof(ARM, Cycles)), Imm32(0));
+        MOV(64, R(RSCRATCH), MatR(RSCRATCH2));
+        MOV(64, R(RSCRATCH3), ImmPtr(target));
+        CMP(64, R(RSCRATCH), MatR(RSCRATCH3));
+        FixupBranch timeUp = J_CC(CC_AE, true);
+
+        // the address of the next instruction: R15 minus 4 (ARM) or 2 (THUMB)
+        MOV(32, R(RSCRATCH), MDisp(RCPU, offsetof(ARM, R[15])));
+        MOV(32, R(RSCRATCH3), R(RCPSR));
+        SHR(32, R(RSCRATCH3), Imm8(4));
+        AND(32, R(RSCRATCH3), Imm8(2));
+        SUB(32, R(RSCRATCH), Imm8(4));
+        ADD(32, R(RSCRATCH), R(RSCRATCH3));
+
+        // its entry in the fast lookup table of the current memory region
+        MOV(32, R(RSCRATCH3), R(RSCRATCH));
+        SUB(32, R(RSCRATCH3), MDisp(RCPU, offsetof(ARM, FastBlockLookupStart)));
+        CMP(32, R(RSCRATCH3), MDisp(RCPU, offsetof(ARM, FastBlockLookupSize)));
+        FixupBranch outside = J_CC(CC_AE, true);
+        MOV(64, R(RSCRATCH2), MDisp(RCPU, offsetof(ARM, FastBlockLookup)));
+        MOV(64, R(RSCRATCH2), MComplex(RSCRATCH2, RSCRATCH3, SCALE_4, 0));  // entries are u64 per halfword
+
+        // the entry is ((address | cpu) << 32) | code offset (ARMJIT::LookUpBlock)
+        if (num) OR(32, R(RSCRATCH), Imm8(1));
+        MOV(64, R(RSCRATCH3), R(RSCRATCH2));
+        SHR(64, R(RSCRATCH3), Imm8(32));
+        CMP(32, R(RSCRATCH3), R(RSCRATCH));
+        FixupBranch noBlock = J_CC(CC_NE, true);
+        MOV(32, R(RSCRATCH2), R(RSCRATCH2));
+        MOV(64, R(RSCRATCH), ImmPtr(&ResetStart));
+        ADD(64, R(RSCRATCH2), MatR(RSCRATCH));
+        JMPptr(R(RSCRATCH2));
+
+        SetJumpTarget(stop);
+        SetJumpTarget(timeUp);
+        SetJumpTarget(outside);
+        SetJumpTarget(noBlock);
+        ABI_TailCall(ARM_Ret);
+        if (const char* dump = std::getenv("WIDEMELON_JIT_DUMPSTUB"))
+        {
+            FILE* f = std::fopen((std::string(dump) + std::to_string(num) + ".bin").c_str(), "wb");
+            if (f) { std::fwrite(DispatchStub[num], 1, GetWritableCodePtr() - DispatchStub[num], f); std::fclose(f); }
+        }
+    }
+
     // move the region forward to prevent overwriting the generated functions
     CodeMemSize -= GetWritableCodePtr() - ResetStart;
     ResetStart = GetWritableCodePtr();
@@ -650,6 +721,20 @@ bool Compiler::IsJITFault(const u8* addr)
     return (u64)addr >= (u64)ResetStart && (u64)addr < (u64)ResetStart + CodeMemSize;
 }
 
+void Compiler::Comp_ExitBlock()
+{
+    // WIDEMELON_JIT_NOCHAIN=1 returns to the C++ loop after every block, as before
+    static const bool noChain = []
+    {
+        const char* env = std::getenv("WIDEMELON_JIT_NOCHAIN");
+        return env && env[0] == '1';
+    }();
+    if (noChain)
+        ABI_TailCall(ARM_Ret);
+    else
+        JMP(DispatchStub[Num], true);
+}
+
 void Compiler::Comp_SpecialBranchBehaviour(bool taken)
 {
     if (taken && CurInstr.BranchFlags & branch_IdleBranch)
@@ -662,7 +747,7 @@ void Compiler::Comp_SpecialBranchBehaviour(bool taken)
 
         if (ConstantCycles)
             ADD(32, MDisp(RCPU, offsetof(ARM, Cycles)), Imm32(ConstantCycles));
-        ABI_TailCall(ARM_Ret);
+        Comp_ExitBlock();
     }
 }
 
@@ -824,7 +909,7 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
 
     if (ConstantCycles)
         ADD(32, MDisp(RCPU, offsetof(ARM, Cycles)), Imm32(ConstantCycles));
-    ABI_TailCall(ARM_Ret);
+    Comp_ExitBlock();
 
 #ifdef JIT_PROFILING_ENABLED
     CreateMethod("JIT_Block_%d_%d_%08X", (void*)res, Num, Thumb, instrs[0].Addr);

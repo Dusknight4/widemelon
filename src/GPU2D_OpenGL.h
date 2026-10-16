@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "GLStreamRing.h"
 #include <memory>
 #include <optional>
 #include "OpenGLSupport.h"
@@ -58,8 +59,10 @@ private:
     GLuint LayerPreShader;
     GLint LayerPreCurBGULoc;
 
-    GLuint ScanlineConfigUBO;
-    GLuint SpriteScanlineConfigUBO;
+    // WideMelon: each pass's lines are streamed into these rings
+    GLStreamRing ScanlineRing;
+    GLStreamRing SpriteScanlineRing;
+    GLintptr ScanlineBound = 0;     // the last pass's block, which RenderWing uses too
 
     GLuint SpritePreShader;
     GLuint SpritePreVtxBuffer;

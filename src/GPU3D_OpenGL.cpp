@@ -1,3 +1,4 @@
+#include <chrono>
 /*
     Copyright 2016-2026 melonDS team
 
@@ -29,6 +30,17 @@
 
 namespace melonDS
 {
+extern u64 FrameStat[16];
+#ifdef WIDEMELON_TIMING
+struct FrameStatTimer   // debugging: adds the time spent in a scope to FrameStat[i], in ns
+{
+    int I; std::chrono::steady_clock::time_point T0 = std::chrono::steady_clock::now();
+    explicit FrameStatTimer(int i) : I(i) {}
+    ~FrameStatTimer() { FrameStat[I] += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - T0).count(); }
+};
+#else
+struct FrameStatTimer { explicit FrameStatTimer(int) {} };   // timing builds only (WIDEMELON_TIMING)
+#endif
 
 #include "OpenGL_shaders/3DClearVS.h"
 #include "OpenGL_shaders/3DClearFS.h"
@@ -1368,6 +1380,7 @@ void GLRenderer3D::RenderSceneChunk(int y, int h)
 
 void GLRenderer3D::RenderFrame()
 {
+    FrameStatTimer timer(5);
     u8 clrBitmapDirty;
     if (!Texcache.Update(clrBitmapDirty) && GPU3D.RenderFrameIdentical)
     {
@@ -1477,9 +1490,9 @@ void GLRenderer3D::RenderFrame()
     ShaderConfig.uFogShift = GPU3D.RenderFogShift;
 
     glBindBuffer(GL_UNIFORM_BUFFER, ShaderConfigUBO);
-    void* unibuf = glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
-    if (unibuf) memcpy(unibuf, &ShaderConfig, sizeof(ShaderConfig));
-    glUnmapBuffer(GL_UNIFORM_BUFFER);
+    // WideMelon: re-specified rather than mapped, which waited for the GPU (and
+    // for the render thread, with GL on its own thread)
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(ShaderConfig), &ShaderConfig, GL_STREAM_DRAW);
 
     glDisable(GL_SCISSOR_TEST);
     glEnable(GL_DEPTH_TEST);
@@ -1567,10 +1580,14 @@ void GLRenderer3D::RenderFrame()
 
         BuildPolygons(&PolygonList[0], npolys, captureinfo);
         glBindBuffer(GL_ARRAY_BUFFER, VertexBufferID);
+        // WideMelon: both buffers re-specified (orphaned) rather than updated in
+        // place, so the driver never waits for the GPU to finish the last frame
+        glBufferData(GL_ARRAY_BUFFER, sizeof(VertexBuffer), nullptr, GL_DYNAMIC_DRAW);
         glBufferSubData(GL_ARRAY_BUFFER, 0, NumVertices*7*4, VertexBuffer);
 
         // bind to access the index buffer
         glBindVertexArray(VertexArrayID);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(IndexBuffer), nullptr, GL_DYNAMIC_DRAW);
         glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, NumIndices * 2, IndexBuffer);
         glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, EdgeIndicesOffset * 2, NumEdgeIndices * 2, IndexBuffer + EdgeIndicesOffset);
 

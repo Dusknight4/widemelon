@@ -235,6 +235,11 @@ private:
     void setupScreenLayout() override;
 
     std::unique_ptr<GL::Context> glContext;
+    // WideMelon: OpenGL runs on its own thread (melonDS::GLThread) for the main
+    // window; these stand in for MakeCurrent/DoneCurrent then
+    bool glThreaded = false;
+    void ctxMakeCurrent();
+    void ctxDoneCurrent();
     bool glInited;
 
     GLuint screenVertexBuffer, screenVertexArray;

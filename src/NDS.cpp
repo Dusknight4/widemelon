@@ -19,6 +19,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <x86intrin.h>
 #include <inttypes.h>
 #include "NDS.h"
 #include "ARM.h"
@@ -50,6 +51,17 @@ namespace melonDS
 using namespace Platform;
 
 const s32 kMaxIterationCycles = 64;
+// WideMelon: the longest stretch the two CPUs run apart (system cycles); for testing
+static s32 MaxIterationCycles()
+{
+    static const s32 cycles = []
+    {
+        const char* env = std::getenv("WIDEMELON_SLICE");
+        const int v = env ? std::atoi(env) : 0;
+        return v >= 16 ? (s32)v : kMaxIterationCycles;
+    }();
+    return cycles;
+}
 const s32 kIterationCycleMargin = 8;
 
 // timing notes
@@ -215,13 +227,27 @@ void NDS::SetARM7RegionTimings(u32 addrstart, u32 addrend, u32 region, int buswi
     }
 }
 
+// The ARM9 clock shift with "Reduce slowdown" on: 3, twice the DSi's 133 MHz, so
+// map loading no longer drops game frames (Platinum: walking between towns and
+// routes). WIDEMELON_ARM9_SHIFT=2 gives the DSi clock instead, for testing.
+static u32 OverclockShift()
+{
+    static const u32 shift = []
+    {
+        const char* env = std::getenv("WIDEMELON_ARM9_SHIFT");
+        const int v = env ? std::atoi(env) : 0;
+        return (v >= 1 && v <= 3) ? (u32)v : 3u;
+    }();
+    return shift;
+}
+
 void NDS::SetARM9Overclock(bool enable) noexcept
 {
     ARM9Overclock = enable;
     if (ConsoleType != 0)
         return; // the DSi sets its own ARM9 clock
 
-    const u32 shift = enable ? 2 : 1;
+    const u32 shift = enable ? OverclockShift() : 1;
     if (shift == ARM9ClockShift)
         return;
 
@@ -529,7 +555,7 @@ void NDS::Reset()
     }
     else
     {
-        ARM9ClockShift = ARM9Overclock ? 2 : 1;
+        ARM9ClockShift = ARM9Overclock ? OverclockShift() : 1;
         MainRAMMask = 0x3FFFFF;
     }
     // has to be called before InitTimings
@@ -800,13 +826,16 @@ bool NDS::DoSavestate(Savestate* file)
         // WideMelon: the state may come from a session with the other ARM9 clock
         // (SetARM9Overclock). ARM9 time stays within a frame of system time, so
         // the clock it was saved with is the one that matches; convert from it.
-        const u32 other = (ARM9ClockShift == 2) ? 1 : 2;
         auto distance = [this](u32 shift)
         {
             const u64 t = ARM9Timestamp >> shift;
             return (t > SysTimestamp) ? t - SysTimestamp : SysTimestamp - t;
         };
-        if (distance(other) < distance(ARM9ClockShift))
+        u32 other = ARM9ClockShift;
+        for (u32 shift = 1; shift <= 3; shift++)
+            if (distance(shift) < distance(other))
+                other = shift;
+        if (other != ARM9ClockShift)
         {
             ARM9Timestamp = (ARM9Timestamp >> other) << ARM9ClockShift;
             ARM9Target    = (ARM9Target >> other) << ARM9ClockShift;
@@ -908,9 +937,82 @@ void NDS::SetARM9BIOS(const std::array<u8, ARM9BIOSSize>& bios) noexcept
     ARM9BIOSNative = CRC32(ARM9BIOS.data(), ARM9BIOS.size()) == ARM9BIOSCRC32;
 }
 
+extern u64 SliceStat[40];
+
+// WIDEMELON_NOHALTSKIP=1 turns SkipHaltedSlices off, for comparison
+static bool HaltSkipEnabled()
+{
+    static const bool enabled = []
+    {
+        const char* env = std::getenv("WIDEMELON_NOHALTSKIP");
+        return !(env && env[0] == '1');
+    }();
+    return enabled;
+}
+
+// WideMelon: while both CPUs are halted waiting for an interrupt, the 3D engine
+// is idle and nothing else is running, each scheduler slice only moves the
+// clock and the timers on. This runs all such slices at once, up to the start
+// of the first one in which something can happen (an event, or a timer
+// overflow, which may raise an interrupt), with the same result as running them
+// one by one: timers count linearly, and the slice it stops at is the one the
+// loop would have reached. It saves most slices in a frame (60-80% of them
+// in the Pokemon games are of this kind).
+void NDS::SkipHaltedSlices()
+{
+    const u64 now = SysTimestamp;
+    if ((ARM9Timestamp >> ARM9ClockShift) != now || (ARM9Timestamp & ((1 << ARM9ClockShift) - 1))
+        || ARM7Timestamp != now || TimerTimestamp[0] != now || TimerTimestamp[1] != now)
+        return;
+
+    u64 minEvent = UINT64_MAX;
+    u32 mask = SchedListMask;
+    for (int i = 0; i < Event_MAX && mask; i++, mask >>= 1)
+        if ((mask & 1) && SchedList[i].Timestamp < minEvent)
+            minEvent = SchedList[i].Timestamp;
+
+    // the first timer overflow (any timer: one may count up another)
+    u64 overflow = UINT64_MAX;
+    for (u32 cpu = 0; cpu < 2; cpu++)
+        for (u32 t = 0; t < 4; t++)
+        {
+            if (!(TimerCheckMask[cpu] & (1 << t))) continue;
+            const Timer& timer = Timers[(cpu << 2) + t];
+            const u64 need = (((u64)1 << 26) - timer.Counter + ((u64)1 << timer.CycleShift) - 1) >> timer.CycleShift;
+            overflow = std::min(overflow, now + need);
+        }
+
+    // slices are [b, b + cap] until the event is within cap + margin of b
+    const u64 cap = MaxIterationCycles();
+    u64 steps = UINT64_MAX;
+    if (minEvent != UINT64_MAX)
+        steps = (minEvent >= now + cap + kIterationCycleMargin) ? (minEvent - cap - kIterationCycleMargin - now) / cap + 1 : 0;
+    if (overflow != UINT64_MAX)
+    {
+        // the slice starting at now + k*cap contains the overflow when it ends at or after it
+        const u64 k = (overflow <= now + cap) ? 0 : (overflow - now - cap + cap - 1) / cap;
+        steps = std::min(steps, k);
+    }
+    if (steps == 0 || steps == UINT64_MAX) return;
+
+    const u64 to = now + steps * cap;
+    ARM9Timestamp = ARM9Target = to << ARM9ClockShift;
+    ARM7Timestamp = ARM7Target = to;
+    RunTimers(0);
+    RunTimers(1);
+    GPU.GPU3D.Run();
+    RunSystem(to);
+    SliceStat[38] += steps;
+}
+
+u64 SliceStat[40];
+u64 EventTime[40];  // debugging: TSC ticks in each event handler
+u64 TimeStat[8];   // debugging: TSC ticks in ARM9, timers9, GPU3D run, ARM7, timers7, RunSystem
+   // debugging: slices ended by each event, [39] by the length cap
 u64 NDS::NextTarget()
 {
     u64 minEvent = UINT64_MAX;
+    int minIndex = 39;
 
     u32 mask = SchedListMask;
     for (int i = 0; i < Event_MAX; i++)
@@ -919,17 +1021,21 @@ u64 NDS::NextTarget()
         if (mask & 0x1)
         {
             if (SchedList[i].Timestamp < minEvent)
-                minEvent = SchedList[i].Timestamp;
+                minEvent = SchedList[i].Timestamp, minIndex = i;
         }
 
         mask >>= 1;
     }
 
-    u64 max = SysTimestamp + kMaxIterationCycles;
+    u64 max = SysTimestamp + MaxIterationCycles();
 
     if (minEvent < max + kIterationCycleMargin)
+    {
+        SliceStat[minIndex]++;
         return minEvent;
+    }
 
+    SliceStat[39]++;
     return max;
 }
 
@@ -1074,9 +1180,15 @@ u32 NDS::RunFrame()
 
             while (Running && GPU.TotalScanlines==0)
             {
+                if (ConsoleType == 0 && cpuMode != CPUExecuteMode::InterpreterGDB && !CPUStop
+                    && ARM9.Halted == 1 && ARM7.Halted == 1 && !HaltInterrupted(0) && !HaltInterrupted(1)
+                    && GPU.GPU3D.IsIdle() && HaltSkipEnabled())
+                    SkipHaltedSlices();
+
                 u64 target = NextTarget();
                 ARM9Target = target << ARM9ClockShift;
                 CurCPU = 0;
+                SliceStat[30 + (ARM9.Halted ? 1 : 0) + (ARM7.Halted ? 2 : 0)]++;
 
                 if (CPUStop & CPUStop_GXStall)
                 {
@@ -1579,9 +1691,13 @@ void NDS::ResumeCPU(u32 cpu, u32 mask)
     CPUStop &= ~mask;
 }
 
+u64 FrameStat[16];   // debugging counters: GX stalls, stalled system cycles, ARM9 idle cycles
+static u64 GXStallStart;
 void NDS::GXFIFOStall()
 {
     if (CPUStop & CPUStop_GXStall) return;
+    FrameStat[0]++;
+    GXStallStart = SysTimestamp;
 
     CPUStop |= CPUStop_GXStall;
 
@@ -1602,6 +1718,7 @@ void NDS::GXFIFOStall()
 
 void NDS::GXFIFOUnstall()
 {
+    if (CPUStop & CPUStop_GXStall) FrameStat[1] += SysTimestamp - GXStallStart;
     CPUStop &= ~CPUStop_GXStall;
 }
 

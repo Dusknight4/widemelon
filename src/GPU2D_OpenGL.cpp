@@ -1,3 +1,4 @@
+#include <chrono>
 /*
     Copyright 2016-2026 melonDS team
 
@@ -24,6 +25,22 @@
 
 namespace melonDS
 {
+extern u64 FrameStat[16];
+// WideMelon: sizes of the rings the per-pass scanline settings are streamed into
+// (enough for a few frames of games that change settings on every line)
+constexpr GLsizeiptr ScanlineRingSize = 4 * 1024 * 1024;
+constexpr GLsizeiptr SpriteScanlineRingSize = 512 * 1024;
+
+#ifdef WIDEMELON_TIMING
+struct FrameStatTimer2D   // debugging: adds the time spent in a scope to FrameStat[i], in ns
+{
+    int I; std::chrono::steady_clock::time_point T0 = std::chrono::steady_clock::now();
+    explicit FrameStatTimer2D(int i) : I(i) {}
+    ~FrameStatTimer2D() { FrameStat[I] += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - T0).count(); }
+};
+#else
+struct FrameStatTimer2D { explicit FrameStatTimer2D(int) {} };   // timing builds only (WIDEMELON_TIMING)
+#endif
 using Platform::Log;
 using Platform::LogLevel;
 
@@ -337,15 +354,10 @@ bool GLRenderer2D::Init()
     static_assert((sizeof(sSpriteConfig) & 15) == 0);
     glBufferData(GL_UNIFORM_BUFFER, sizeof(sSpriteConfig), nullptr, GL_STREAM_DRAW);
 
-    glGenBuffers(1, &ScanlineConfigUBO);
-    glBindBuffer(GL_UNIFORM_BUFFER, ScanlineConfigUBO);
     static_assert((sizeof(sScanlineConfig) & 15) == 0);
-    glBufferData(GL_UNIFORM_BUFFER, sizeof(sScanlineConfig), nullptr, GL_STREAM_DRAW);
-
-    glGenBuffers(1, &SpriteScanlineConfigUBO);
-    glBindBuffer(GL_UNIFORM_BUFFER, SpriteScanlineConfigUBO);
+    ScanlineRing.Init(ScanlineRingSize);
     static_assert((sizeof(sSpriteScanlineConfig) & 15) == 0);
-    glBufferData(GL_UNIFORM_BUFFER, sizeof(sSpriteScanlineConfig), nullptr, GL_STREAM_DRAW);
+    SpriteScanlineRing.Init(SpriteScanlineRingSize);
 
     glGenBuffers(1, &CompositorConfigUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, CompositorConfigUBO);
@@ -394,8 +406,8 @@ GLRenderer2D::~GLRenderer2D()
     glDeleteTextures(1, &OutputTex);
     glDeleteFramebuffers(1, &OutputFB);
 
-    glDeleteBuffers(1, &ScanlineConfigUBO);
-    glDeleteBuffers(1, &SpriteScanlineConfigUBO);
+    ScanlineRing.Release();
+    SpriteScanlineRing.Release();
     glDeleteBuffers(1, &CompositorConfigUBO);
 }
 
@@ -516,6 +528,7 @@ bool GLRenderer2D::IsScreenOn()
 
 void GLRenderer2D::UpdateAndRender(int line)
 {
+    FrameStatTimer2D whole(13);
     u32 palmask = 1 << (GPU2D.Num * 2);
 
     // check if any 'critical' registers were modified
@@ -1283,7 +1296,9 @@ void GLRenderer2D::UpdateLayerConfig()
     }
 
     glBindBuffer(GL_UNIFORM_BUFFER, LayerConfigUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LayerConfig), &LayerConfig);
+    // WideMelon: re-specified (orphaned) rather than updated in place, so the driver
+    // never waits for the GPU to finish reading the old contents
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(LayerConfig), &LayerConfig, GL_STREAM_DRAW);
 }
 
 void GLRenderer2D::UpdateOAM(int ystart, int yend)
@@ -1513,6 +1528,7 @@ void GLRenderer2D::UpdateOAM(int ystart, int yend)
     }
 
     glBindBuffer(GL_UNIFORM_BUFFER, SpriteConfigUBO);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(sSpriteConfig), nullptr, GL_STREAM_DRAW);   // orphaned, see UpdateLayerConfig
     glBufferSubData(GL_UNIFORM_BUFFER,
                     0,
                     offsetof(sSpriteConfig, uOAM) + (NumSprites * sizeof(cfg.uOAM[0])),
@@ -1545,7 +1561,7 @@ void GLRenderer2D::UpdateCompositorConfig()
     CompositorConfig.uBlendCoef[2] = EVY;
 
     glBindBuffer(GL_UNIFORM_BUFFER, CompositorConfigUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(CompositorConfig), &CompositorConfig);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(CompositorConfig), &CompositorConfig, GL_STREAM_DRAW);   // orphaned
 }
 
 
@@ -1586,7 +1602,7 @@ void GLRenderer2D::PrerenderSprites()
     glViewport(0, 0, 1024, 512);
 
     glBindBuffer(GL_ARRAY_BUFFER, SpritePreVtxBuffer);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, vtxnum * 3 * sizeof(u16), SpritePreVtxData);
+    glBufferData(GL_ARRAY_BUFFER, vtxnum * 3 * sizeof(u16), SpritePreVtxData, GL_STREAM_DRAW);   // orphaned
 
     glBindVertexArray(SpritePreVtxArray);
     glDrawArrays(GL_TRIANGLES, 0, vtxnum);
@@ -1615,6 +1631,8 @@ void GLRenderer2D::PrerenderLayer(int layer)
 
 void GLRenderer2D::DoRenderSprites(int line)
 {
+    FrameStat[4]++;
+    FrameStatTimer2D whole(12);
     int ystart = LastSpriteLine;
     int yend = line;
 
@@ -1625,13 +1643,11 @@ void GLRenderer2D::DoRenderSprites(int line)
     glDisable(GL_BLEND);
 
     glBindBufferBase(GL_UNIFORM_BUFFER, 21, SpriteConfigUBO);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 24, SpriteScanlineConfigUBO);
-
-    glBindBuffer(GL_UNIFORM_BUFFER, SpriteScanlineConfigUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER,
-                    ystart * sizeof(s32),
-                    (yend - ystart) * sizeof(s32),
-                    &SpriteScanlineConfig.uMosaicLine[ystart]);
+    {
+        const GLintptr base = SpriteScanlineRing.Write(&SpriteScanlineConfig, sizeof(SpriteScanlineConfig),
+                                                       ystart * sizeof(s32), (yend - ystart) * sizeof(s32));
+        glBindBufferRange(GL_UNIFORM_BUFFER, 24, SpriteScanlineRing.Buffer, base, sizeof(SpriteScanlineConfig));
+    }
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, OBJLayerFB);
@@ -1747,7 +1763,7 @@ void GLRenderer2D::RenderSprites(bool window, int ystart, int yend)
     if (vtxnum == 0) return;
 
     glBindBuffer(GL_ARRAY_BUFFER, SpriteVtxBuffer);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, vtxnum * 5 * sizeof(u16), SpriteVtxData);
+    glBufferData(GL_ARRAY_BUFFER, vtxnum * 5 * sizeof(u16), SpriteVtxData, GL_STREAM_DRAW);   // orphaned
 
     glBindVertexArray(SpriteVtxArray);
     glDrawArrays(GL_TRIANGLES, 0, vtxnum);
@@ -1755,6 +1771,8 @@ void GLRenderer2D::RenderSprites(bool window, int ystart, int yend)
 
 void GLRenderer2D::RenderScreen(int ystart, int yend)
 {
+    FrameStat[3]++;
+    FrameStatTimer2D whole(8);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, OutputFB);
 
@@ -1790,16 +1808,18 @@ void GLRenderer2D::RenderScreen(int ystart, int yend)
     glUseProgram(CompositorShader);
 
     glBindBufferBase(GL_UNIFORM_BUFFER, 20, LayerConfigUBO);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 22, ScanlineConfigUBO);
     glBindBufferBase(GL_UNIFORM_BUFFER, 23, CompositorConfigUBO);
 
-    glBindBuffer(GL_UNIFORM_BUFFER, ScanlineConfigUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER,
-                    ystart * sizeof(sScanlineConfig::sScanline),
-                    (yend - ystart) * sizeof(sScanlineConfig::sScanline),
-                    &ScanlineConfig.uScanline[ystart]);
+    {
+    FrameStatTimer2D t(9);
+    // this pass's lines (all of them for the frame's last pass: RenderWing uses those)
+    const GLsizeiptr row = sizeof(sScanlineConfig::sScanline);
+    const int first = (yend == 192) ? 0 : ystart;
+    ScanlineBound = ScanlineRing.Write(&ScanlineConfig, sizeof(ScanlineConfig), first * row, (yend - first) * row);
+    glBindBufferRange(GL_UNIFORM_BUFFER, 22, ScanlineRing.Buffer, ScanlineBound, sizeof(ScanlineConfig));
+    }
 
-    UpdateCompositorConfig();
+    { FrameStatTimer2D t(10); UpdateCompositorConfig(); }
 
     for (int i = 0; i < 4; i++)
     {
@@ -1827,6 +1847,7 @@ void GLRenderer2D::RenderScreen(int ystart, int yend)
     glActiveTexture(GL_TEXTURE7);
     glBindTexture(GL_TEXTURE_2D, MosaicTex);
 
+    FrameStatTimer2D t(11);
     glBindBuffer(GL_ARRAY_BUFFER, Parent.RectVtxBuffer);
     glBindVertexArray(Parent.RectVtxArray);
     glDrawArrays(GL_TRIANGLES, 0, 2*3);
@@ -1846,7 +1867,7 @@ void GLRenderer2D::RenderWing(int x, int span, int fillBG, int fillScrollX, int 
 
     glUseProgram(CompositorShader);
     glBindBufferBase(GL_UNIFORM_BUFFER, 20, LayerConfigUBO);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 22, ScanlineConfigUBO);
+    glBindBufferRange(GL_UNIFORM_BUFFER, 22, ScanlineRing.Buffer, ScanlineBound, sizeof(ScanlineConfig));
     glBindBufferBase(GL_UNIFORM_BUFFER, 23, CompositorConfigUBO);
 
     for (int i = 0; i < 4; i++)

@@ -267,6 +267,10 @@ public:
     void* ReadBanked {};
     void* WriteBanked {};
 
+    // WideMelon: where blocks of each CPU go when they end (see the constructor)
+    const u8* DispatchStub[2] {};
+    void Comp_ExitBlock();
+
     bool CPSRDirty = false;
 
     FetchedInstr CurInstr {};

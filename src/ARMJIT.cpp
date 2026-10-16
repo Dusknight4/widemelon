@@ -48,6 +48,7 @@
 
 namespace melonDS
 {
+extern u64 JitStat[8];
 using Platform::Log;
 using Platform::LogLevel;
 
@@ -177,9 +178,11 @@ void SlowWrite7(u32 addr, u32 val)
         NDS::Current->ARM7Write8(addr, val);
 }
 
+u64 BlockXferStat[32];   // debugging: slow LDM/STM words by region (addr >> 24), +16 for stores
 template <bool Write, int ConsoleType>
 void SlowBlockTransfer9(u32 addr, u64* data, u32 num, ARMv5* cpu)
 {
+    BlockXferStat[(((addr & cpu->DTCMMask) == cpu->DTCMBase) ? 13 : ((addr >> 24) & 15)) + (Write ? 16 : 0)] += num;   // 13: DTCM
     addr &= ~0x3;
     for (u32 i = 0; i < num; i++)
     {
@@ -895,6 +898,7 @@ void ARMJIT::CompileBlock(ARM* cpu) noexcept
 
         FloodFillSetFlags(instrs, i - 1, 0xF);
 
+        JitStat[4]++;
         JitEnableWrite();
         block->EntryPoint = JITCompiler.CompileBlock(cpu, thumb, instrs, i, hasMemoryInstr);
         JitEnableExecute();
@@ -936,6 +940,7 @@ void ARMJIT::CompileBlock(ARM* cpu) noexcept
 
 void ARMJIT::InvalidateByAddr(u32 localAddr) noexcept
 {
+    JitStat[5]++;
     JIT_DEBUGPRINT("invalidating by addr %x\n", localAddr);
 
     AddressRange* region = CodeMemRegions[localAddr >> 27];

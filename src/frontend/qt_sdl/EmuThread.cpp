@@ -29,6 +29,65 @@
 #include <SDL2/SDL.h>
 
 #include "WideMelon.h"
+
+// Debugging aids for recording and timing the app itself:
+// WIDEMELON_INPUT_SCRIPT plays a key sequence, "keys*frames,..." (keys joined
+// with +, or "none"), from the first emulated frame; WIDEMELON_FRAME_LOG names a
+// file that gets one line of timings per frame.
+static uint32_t ScriptedKeyMask()
+{
+    using u32 = uint32_t;
+    struct Step { u32 mask; int frames; };
+    static std::vector<Step> steps = []
+    {
+        std::vector<Step> out;
+        const char* env = std::getenv("WIDEMELON_INPUT_SCRIPT");
+        if (!env) return out;
+        static const char* names[12] = {"a", "b", "select", "start", "right", "left", "up", "down", "r", "l", "x", "y"};
+        std::string script = env;
+        size_t pos = 0;
+        while (pos < script.size())
+        {
+            size_t end = script.find(',', pos);
+            if (end == std::string::npos) end = script.size();
+            const std::string item = script.substr(pos, end - pos);
+            pos = end + 1;
+            const size_t star = item.find('*');
+            const std::string keys = item.substr(0, star);
+            const int frames = star == std::string::npos ? 1 : std::atoi(item.c_str() + star + 1);
+            u32 mask = 0xFFF;
+            size_t k = 0;
+            while (k <= keys.size())
+            {
+                size_t plus = keys.find('+', k);
+                if (plus == std::string::npos) plus = keys.size();
+                const std::string key = keys.substr(k, plus - k);
+                for (int i = 0; i < 12; i++) if (key == names[i]) mask &= ~(1u << i);
+                k = plus + 1;
+            }
+            out.push_back({mask, frames});
+        }
+        return out;
+    }();
+    static size_t step = 0;
+    static int frame = 0;
+    if (step >= steps.size()) return 0xFFF;
+    const u32 mask = steps[step].mask;
+    if (++frame >= steps[step].frames) { frame = 0; step++; }
+    return mask;
+}
+
+static FILE* FrameLog()
+{
+    static FILE* log = []() -> FILE*
+    {
+        const char* path = std::getenv("WIDEMELON_FRAME_LOG");
+        FILE* f = path ? std::fopen(path, "w") : nullptr;
+        if (f) std::fprintf(f, "frame,start_ms,emu_ms,period_ms,present_ms\n");
+        return f;
+    }();
+    return log;
+}
 #include "PhoneBridge.h"
 #include "main.h"
 
@@ -257,7 +316,7 @@ void EmuThread::run()
             }
 
             // process input and hotkeys
-            emuInstance->nds->SetKeyMask(emuInstance->inputMask);
+            emuInstance->nds->SetKeyMask(emuInstance->inputMask & ScriptedKeyMask());
 
             const u32 phoneTouch = emuInstance->phoneBridge
                 ? emuInstance->phoneBridge->remoteTouchSnapshot() : 0;
@@ -336,6 +395,13 @@ void EmuThread::run()
 
             presentFrame(motionSmoothing && useOpenGL && emuInstance->doLimitFPS && !fastforward && !slowmo,
                          emuMs, periodMs);
+            if (FILE* log = FrameLog())
+            {
+                const double now = SDL_GetPerformanceCounter() * perfCountsSec;
+                std::fprintf(log, "%u,%.3f,%.3f,%.3f,%.3f\n", emuInstance->nds->NumFrames, frameStart * 1000.0, emuMs, periodMs,
+                             (now - frameStart) * 1000.0 - emuMs);
+                std::fflush(log);
+            }
 
 #ifdef MELONCAP
             MelonCap::Update();

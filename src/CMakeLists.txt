@@ -103,7 +103,8 @@ if (ENABLE_OGLRENDERER)
         GPU3D_Compute.cpp
         GPU3D_TexcacheOpenGL.cpp
         GPU3D_TexcacheOpenGL.h
-        OpenGLSupport.cpp)
+        OpenGLSupport.cpp
+        GLThread.cpp)
 
     target_compile_definitions(core PUBLIC OGLRENDERER_ENABLED)
 endif()

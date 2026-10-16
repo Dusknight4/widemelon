@@ -1,3 +1,4 @@
+#include <chrono>
 /*
     Copyright 2016-2026 melonDS team
 
@@ -26,6 +27,17 @@
 
 namespace melonDS
 {
+extern u64 FrameStat[16];
+#ifdef WIDEMELON_TIMING
+struct FrameStatTimer   // debugging: adds the time spent in a scope to FrameStat[i], in ns
+{
+    int I; std::chrono::steady_clock::time_point T0 = std::chrono::steady_clock::now();
+    explicit FrameStatTimer(int i) : I(i) {}
+    ~FrameStatTimer() { FrameStat[I] += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - T0).count(); }
+};
+#else
+struct FrameStatTimer { explicit FrameStatTimer(int) {} };   // timing builds only (WIDEMELON_TIMING)
+#endif
 using Platform::Log;
 using Platform::LogLevel;
 
@@ -576,6 +588,7 @@ void GLRenderer::SetScaleFactor(int scale)
 
 void GLRenderer::DrawScanline(u32 line)
 {
+    FrameStatTimer timer(6);
     u32 dispcnt_a_diff = DispCntA ^ GPU.GPU2D_A.DispCnt;
     u32 dispcnt_b_diff = DispCntB ^ GPU.GPU2D_B.DispCnt;
     u32 capturecnt_diff = CaptureCnt ^ GPU.CaptureCnt;
@@ -881,7 +894,7 @@ void GLRenderer::RenderScreen(int ystart, int yend)
         }
 
         glBindBuffer(GL_UNIFORM_BUFFER, FPConfigUBO);
-        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(FinalPassConfig), &FinalPassConfig);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(FinalPassConfig), &FinalPassConfig, GL_STREAM_DRAW);   // WideMelon: orphaned, no wait for the GPU
 
         glBindBuffer(GL_ARRAY_BUFFER, FPVertexBufferID);
         glBindVertexArray(FPVertexArrayID);
@@ -893,6 +906,7 @@ void GLRenderer::RenderScreen(int ystart, int yend)
 
 void GLRenderer::VBlank()
 {
+    FrameStatTimer timer(7);
     Rend2D_A->VBlank();
     Rend2D_B->VBlank();
 
@@ -1218,7 +1232,7 @@ void GLRenderer::DoCapture(int ystart, int yend)
     CaptureConfig.uBlendFactors[1] = evb;
 
     glBindBuffer(GL_UNIFORM_BUFFER, CaptureConfigUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(CaptureConfig), &CaptureConfig);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(CaptureConfig), &CaptureConfig, GL_STREAM_DRAW);   // WideMelon: orphaned
 
     glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
@@ -1279,7 +1293,7 @@ void GLRenderer::DoCapture(int ystart, int yend)
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, CaptureVtxBuffer);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, numvtx * 4 * sizeof(u16), vtxbuf);
+    glBufferData(GL_ARRAY_BUFFER, numvtx * 4 * sizeof(u16), vtxbuf, GL_STREAM_DRAW);   // WideMelon: orphaned
 
     glBindVertexArray(CaptureVtxArray);
     glDrawArrays(GL_TRIANGLES, 0, numvtx);

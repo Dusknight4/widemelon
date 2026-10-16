@@ -16,6 +16,12 @@ namespace
 constexpr float BadBlockCost = 0.05f;    // a block this far off has no real match
 constexpr float CutShare = 0.2f;         // this share of bad blocks means the screen changed
 constexpr float StillCutShare = 0.05f;   // the same while the camera is still
+// In a 30 fps game, a frame that should repeat the last image but changes less
+// than this share of the screen (an area-name sign sliding in, a blinking
+// cursor) is 2D animation running at 60 fps over the slower 3D world. It
+// updates the newest image instead of counting as a new one, so the world keeps
+// being smoothed rather than the whole screen dropping to 30 fps.
+constexpr float OverlayShare = 0.3f;
 
 // All passes draw one triangle covering the target and work in texel space.
 const char* kVS = R"(#version 140
@@ -734,12 +740,25 @@ void FrameInterpolator::Submit(GLuint source, int width, int height, melonDS::u3
     {
         Layer& layer = Layers[l];
         bool changed = layer.Order.empty();
+        int changedRegions = 0;
         if (!changed)
         {
             const float* rows = diff.data() + (size_t)l * DiffW * DiffH;
-            changed = std::any_of(rows, rows + DiffW * DiffH, [](float d) { return d > 0.5f / 255.f; });
+            changedRegions = (int)std::count_if(rows, rows + DiffW * DiffH, [](float d) { return d > 0.5f / 255.f; });
+            changed = changedRegions > 0;
         }
         if (!changed) continue;   // a repeat of the newest image
+
+        if (layer.Period >= 2 && frame - layer.LastDistinct < (melonDS::u32)layer.Period
+            && changedRegions < OverlayShare * DiffW * DiffH)
+        {
+            // 2D animation between the world's images: refresh the newest one
+            Slot& newest = layer.Slots[layer.Order.back()];
+            Blit(source, l, newest.Full, -1, Width, Height);
+            Blit(layer.Slots[layer.Scratch].Small, -1, newest.Small, -1, NativeW, NativeH);
+            Downsample(newest.Small, newest.Quarter, 4, NativeW / 4, NativeH / 4);
+            continue;
+        }
 
         Slot& slot = layer.Slots[layer.Scratch];
         Blit(source, l, slot.Full, -1, Width, Height);

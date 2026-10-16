@@ -104,6 +104,7 @@
 
 namespace melonDS
 {
+extern u64 JitStat[8];
 
 static constexpr u64 AddrSpaceSize = 0x100000000;
 static constexpr u64 VirtmemAreaSize = AddrSpaceSize * 2 + MemoryTotalSize;
@@ -180,6 +181,19 @@ LONG ARMJIT_Memory::ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
     FaultDescription desc {};
     desc.EmulatedFaultAddr = (u8*)exceptionInfo->ExceptionRecord->ExceptionInformation[1] - curArea;
     desc.FaultPC = (u8*)exceptionInfo->ContextRecord->CONTEXT_PC;
+    {
+        static const bool logFaults = std::getenv("WIDEMELON_JIT_LOGFAULTS") != nullptr;
+        static int logged = 0;
+        if (logFaults && logged < 40)
+        {
+            logged++;
+            MEMORY_BASIC_INFORMATION mbi {};
+            VirtualQuery((void*)exceptionInfo->ExceptionRecord->ExceptionInformation[1], &mbi, sizeof(mbi));
+            printf("winfault kind %llu addr %08X protect %lX state %lX type %lX regionsize %llX\n",
+                   (unsigned long long)exceptionInfo->ExceptionRecord->ExceptionInformation[0], desc.EmulatedFaultAddr,
+                   mbi.Protect, mbi.State, mbi.Type, (unsigned long long)mbi.RegionSize);
+        }
+    }
 
     if (FaultHandler(desc, *NDS::Current))
     {
@@ -404,6 +418,7 @@ void ARMJIT_Memory::SetCodeProtectionRange(u32 addr, u32 size, u32 num, int prot
     CHECK_ALIGNED(size);
 
     u8* dst = (u8*)(num == 0 ? FastMem9Start : FastMem7Start) + addr;
+    JitStat[3]++;
 #if defined(_WIN32)
     DWORD winProtection, oldProtection;
     if (protection == 0)
@@ -433,6 +448,7 @@ void ARMJIT_Memory::SetCodeProtectionRange(u32 addr, u32 size, u32 num, int prot
 
 void ARMJIT_Memory::Mapping::Unmap(int region, melonDS::NDS& nds) noexcept
 {
+    JitStat[7]++;
     u32 dtcmStart = nds.ARM9.DTCMBase;
     u32 dtcmSize = ~nds.ARM9.DTCMMask + 1;
     bool skipDTCM = Num == 0 && region != memregion_DTCM;
@@ -471,7 +487,7 @@ void ARMJIT_Memory::Mapping::Unmap(int region, melonDS::NDS& nds) noexcept
 
 #ifndef __SWITCH__
     u32 dtcmEnd = dtcmStart + dtcmSize;
-    if (Num == 0
+    if (Num == 0 && region != memregion_DTCM   // as in MapAtAddress
         && dtcmEnd >= Addr
         && dtcmStart < Addr + Size)
     {
@@ -653,7 +669,11 @@ bool ARMJIT_Memory::MapAtAddress(u32 addr) noexcept
     u32 dtcmSize = ~NDS.ARM9.DTCMMask + 1;
     u32 dtcmEnd = dtcmStart + dtcmSize;
 #ifndef __SWITCH__
-    if (num == 0
+    // WideMelon: a mirror the DTCM covers part of is mapped around it, but the
+    // DTCM itself is mapped whole. Without the region check the DTCM was never
+    // mapped (both parts "around" it are empty) yet marked as mapped, so every
+    // stack access the JIT made faulted once and was turned into a slow call.
+    if (num == 0 && region != memregion_DTCM
         && dtcmEnd >= mirrorStart
         && dtcmStart < mirrorStart + mirrorSize)
     {
@@ -818,19 +838,31 @@ void ARMJIT_Memory::UnregisterFaultHandler()
 #endif
 }
 
+u64 JitStat[8];
 bool ARMJIT_Memory::FaultHandler(FaultDescription& faultDesc, melonDS::NDS& nds)
 {
+    JitStat[0]++;
     if (nds.JIT.JITCompiler.IsJITFault(faultDesc.FaultPC))
     {
         bool rewriteToSlowPath = true;
 
         u8* memStatus = nds.CurCPU == 0 ? nds.JIT.Memory.MappingStatus9 : nds.JIT.Memory.MappingStatus7;
 
-        if (memStatus[faultDesc.EmulatedFaultAddr >> PageShift] == memstate_Unmapped)
-            rewriteToSlowPath = !nds.JIT.Memory.MapAtAddress(faultDesc.EmulatedFaultAddr);
+        const u8 status = memStatus[faultDesc.EmulatedFaultAddr >> PageShift];
+        if (status == memstate_Unmapped)
+            { JitStat[1]++; rewriteToSlowPath = !nds.JIT.Memory.MapAtAddress(faultDesc.EmulatedFaultAddr); }
+        static const bool logFaults = std::getenv("WIDEMELON_JIT_LOGFAULTS") != nullptr;
+        static int logged = 0;
+        if (logFaults && logged < 200)
+        {
+            logged++;
+            printf("jitfault cpu%d addr %08llX status %d rewrite %d dtcm %08X/%08X\n", nds.CurCPU, (unsigned long long)faultDesc.EmulatedFaultAddr,
+                   status, rewriteToSlowPath, nds.ARM9.DTCMBase, nds.ARM9.DTCMMask);
+        }
 
         if (rewriteToSlowPath)
         {
+            JitStat[2]++;
             nds.JIT.JitEnableWrite();
             faultDesc.FaultPC = nds.JIT.JITCompiler.RewriteMemAccess(faultDesc.FaultPC);
             nds.JIT.JitEnableExecute();

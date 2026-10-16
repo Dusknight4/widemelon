@@ -955,6 +955,11 @@ ScreenPanelGL::ScreenPanelGL(QWidget* parent) : ScreenPanel(parent)
 
 ScreenPanelGL::~ScreenPanelGL()
 {
+    if (glThreaded)
+    {
+        melonDS::GLThread::Stop();
+        glThreaded = false;
+    }
     // deinitOpenGL() normally frees the interpolator; otherwise its GL objects
     // go away with the context, which may not be current here
     (void)interpolator.release();
@@ -992,7 +997,35 @@ void ScreenPanelGL::setSwapInterval(int intv)
 {
     if (!glContext) return;
 
-    glContext->SetSwapInterval(intv);
+    melonDS::GLThread::RunSync([&] { glContext->SetSwapInterval(intv); });
+}
+
+// WideMelon: OpenGL on its own thread, for the main window (one window only:
+// other windows have their own contexts, and opening one stops it for the
+// session). WIDEMELON_GLTHREAD=0 turns it off.
+static bool GLThreadAllowed = []
+{
+    const char* env = std::getenv("WIDEMELON_GLTHREAD");
+    return !(env && env[0] == '0');
+}();
+
+void ScreenPanelGL::ctxMakeCurrent()
+{
+    if (glThreaded && !melonDS::GLThread::Running()) glThreaded = false;
+    if (glThreaded) return;     // the render thread holds the context
+    if (melonDS::GLThread::Running())
+    {
+        // another window's context: GL calls must go straight to the driver
+        melonDS::GLThread::Stop();
+        GLThreadAllowed = false;
+    }
+    glContext->MakeCurrent();
+}
+
+void ScreenPanelGL::ctxDoneCurrent()
+{
+    if (glThreaded) melonDS::GLThread::Release();
+    else glContext->DoneCurrent();
 }
 
 void ScreenPanelGL::initOpenGL()
@@ -1000,7 +1033,13 @@ void ScreenPanelGL::initOpenGL()
     if (!glContext) return;
     if (glInited) return;
 
-    glContext->MakeCurrent();
+    if (GLThreadAllowed && mainWindow->getWindowID() == 0 && !melonDS::GLThread::Running())
+    {
+        GL::Context* ctx = glContext.get();
+        melonDS::GLThread::Start([ctx] { ctx->MakeCurrent(); }, [ctx] { ctx->DoneCurrent(); });
+        glThreaded = melonDS::GLThread::Running();
+    }
+    ctxMakeCurrent();
 
     OpenGL::CompileVertexFragmentProgram(screenShaderProgram,
                                          kScreenVS, kScreenFS,
@@ -1173,7 +1212,7 @@ void ScreenPanelGL::deinitOpenGL()
     if (!glContext) return;
     if (!glInited) return;
 
-    glContext->MakeCurrent();
+    ctxMakeCurrent();
 
     interpolator.reset();
     smoothingActive = false;
@@ -1214,7 +1253,14 @@ void ScreenPanelGL::deinitOpenGL()
     glDeleteProgram(osdShader);
 
 
-    glContext->DoneCurrent();
+    if (glThreaded)
+    {
+        // the render thread releases the context as it ends
+        melonDS::GLThread::Stop();
+        glThreaded = false;
+    }
+    else
+        glContext->DoneCurrent();
 
     lastScreenWidth = lastScreenHeight = -1;
     glInited = false;
@@ -1224,13 +1270,22 @@ void ScreenPanelGL::makeCurrentGL()
 {
     if (!glContext) return;
 
-    glContext->MakeCurrent();
+    ctxMakeCurrent();
 }
 
 void ScreenPanelGL::releaseGL()
 {
     if (!glContext) return;
 
+    if (glThreaded)
+    {
+        // another thread wants the context (a new window sharing it): give it
+        // back for good, GL calls go straight to the driver from now on
+        melonDS::GLThread::Stop();
+        glThreaded = false;
+        GLThreadAllowed = false;
+        return;
+    }
     glContext->DoneCurrent();
 }
 
@@ -1268,7 +1323,7 @@ void ScreenPanelGL::drawScreen()
 
     auto emuThread = emuInstance->getEmuThread();
 
-    glContext->MakeCurrent();
+    ctxMakeCurrent();
 
     int w = windowInfo.surface_width;
     int h = windowInfo.surface_height;
@@ -1478,7 +1533,13 @@ void ScreenPanelGL::drawScreen()
         osdMutex.unlock();
     }
 
-    glContext->SwapBuffers();
+    if (glThreaded)
+    {
+        GL::Context* ctx = glContext.get();
+        melonDS::GLThread::Swap([ctx] { ctx->SwapBuffers(); });
+    }
+    else
+        glContext->SwapBuffers();
 }
 
 GLuint ScreenPanelGL::smoothFrame(melonDS::NDS* nds, GLuint source)
@@ -1721,7 +1782,7 @@ void ScreenPanelGL::transferLayout()
         if (lastScreenWidth != windowInfo->surface_width || lastScreenHeight != windowInfo->surface_height)
         {
             if (glContext)
-                glContext->ResizeSurface(windowInfo->surface_width, windowInfo->surface_height);
+                melonDS::GLThread::RunSync([&] { glContext->ResizeSurface(windowInfo->surface_width, windowInfo->surface_height); });
             lastScreenWidth = windowInfo->surface_width;
             lastScreenHeight = windowInfo->surface_height;
         }

@@ -91,6 +91,8 @@ class NDS;
 class GPU3D
 {
 public:
+    // WideMelon: nothing to catch up on in Run() (NDS::SkipHaltedSlices)
+    bool IsIdle() const noexcept { return !GeometryEnabled || FlushRequest || (CmdPIPE.IsEmpty() && !(GXStat & (1<<27))); }
     GPU3D(melonDS::GPU& gpu) noexcept;
     ~GPU3D() noexcept = default;
     void Reset() noexcept;

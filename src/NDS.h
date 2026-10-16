@@ -548,6 +548,7 @@ protected:
     u64 LastSysClockCycles;
     u64 FrameStartTimestamp;
     u64 NextTarget();
+    void SkipHaltedSlices();
     u64 NextTargetSleep();
     void CheckKeyIRQ(u32 cpu, u32 oldkey, u32 newkey);
     void Reschedule(u64 target);
