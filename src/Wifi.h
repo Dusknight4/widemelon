@@ -23,6 +23,8 @@
 
 namespace melonDS
 {
+// WideMelon: writes the WIDEMELON_WIFI_TRACE list (see Wifi.cpp)
+void WifiTraceDump();
 class WifiAP;
 class NDS;
 class Wifi

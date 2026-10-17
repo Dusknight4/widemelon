@@ -1772,6 +1772,24 @@ void EmuInstance::customizeFirmware(Firmware& firmware, bool overridesettings) n
         mac[5] += instanceID*0x10;
     }
 
+    // WideMelon: with the DS bridge, the other side may be another WideMelon on
+    // the same firmware, so the same MAC address; make this one's its own,
+    // the same each time for this PC and bridge port
+    if (const char* bridge = getenv("WIDEMELON_BRIDGE"); bridge && bridge[0])
+    {
+        std::string id;
+        if (const char* pc = getenv("COMPUTERNAME")) id += pc;
+        if (const char* host = getenv("HOSTNAME")) id += host;
+        id += ':';
+        if (const char* port = getenv("WIDEMELON_BRIDGE_PORT")) id += port;
+        u32 hash = 2166136261u;
+        for (char c : id) hash = (hash ^ (u8)c) * 16777619u;
+        rep = true;
+        mac[3] ^= hash;
+        mac[4] ^= hash >> 8;
+        mac[5] ^= hash >> 16;
+    }
+
     if (rep)
     {
         mac[0] &= 0xFC; // ensure the MAC isn't a broadcast MAC

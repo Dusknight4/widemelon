@@ -440,6 +440,14 @@ public: // TODO: Encapsulate the rest of these members
 
     void UpdateIRQ(u32 cpu);
     void SetIRQ(u32 cpu, u32 irq);
+
+    // WideMelon (testing the WM HLE): words the ARM9 sends through the IPC FIFO
+    // can be taken by PxiTap instead of reaching the ARM7 (it returns true to
+    // take one), and InjectArm7Fifo sends a word to the ARM9 as the ARM7 would
+    bool (*PxiTap)(NDS* nds, u32 val) = nullptr;
+    // and called at the start of each scanline (to run the WM HLE often)
+    void (*ScanlineHook)(NDS* nds, u32 line) = nullptr;
+    void InjectArm7Fifo(u32 val);
     void ClearIRQ(u32 cpu, u32 irq);
     void SetIRQ2(u32 irq);
     void ClearIRQ2(u32 irq);

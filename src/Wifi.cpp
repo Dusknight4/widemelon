@@ -17,7 +17,11 @@
 */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <map>
+#include <mutex>
+#include <tuple>
 #include "NDS.h"
 #include "SPI.h"
 #include "Wifi.h"
@@ -28,6 +32,50 @@ namespace melonDS
 {
 using Platform::Log;
 using Platform::LogLevel;
+
+// WideMelon: WIDEMELON_WIFI_TRACE=<file> lists which ARM7 code touches the wifi
+// hardware (register/RAM, read or write, with PC and LR, and how often), to find
+// where a game's wireless driver sends and receives frames. Written by WifiTraceDump().
+static const bool kWifiTrace = getenv("WIDEMELON_WIFI_TRACE") != nullptr;
+static std::mutex WifiTraceLock;
+static std::map<std::tuple<char, u32, u32, u32>, u32> WifiTraceHits;   // (r/w, what, pc, lr) -> count
+
+static void WifiTrace(NDS& nds, char rw, u32 addr)
+{
+    // wifi RAM by area, registers one by one
+    const u32 what = (addr >= 0x4000 && addr < 0x6000) ? 0x10000 | ((addr & 0x1FFE) < 0x1000 ? 0 : 1) : addr;
+    std::lock_guard l(WifiTraceLock);
+    WifiTraceHits[{rw, what, nds.ARM7.R[15], nds.ARM7.R[14]}]++;
+}
+
+// WIDEMELON_MP_EVLOG=<file>: each console's last MP events (reply-slot and power
+// register writes, IRQs, CMDs answered), in emulated time; written by WifiTraceDump()
+static const char* kMpEvLogPath = getenv("WIDEMELON_MP_EVLOG");
+static FILE* MpEvFile;
+static void MpEvent(const void* who, u64 us, char what, u16 a, u16 v)
+{
+    // as they happen (the moment that matters is usually long before the end)
+    std::lock_guard l(WifiTraceLock);
+    if (!MpEvFile) MpEvFile = fopen(kMpEvLogPath, "w");
+    if (MpEvFile) fprintf(MpEvFile, "%p %llu %c %03X %04X\n", who, (unsigned long long)us, what, a, v);
+}
+
+void WifiTraceDump()
+{
+    if (MpEvFile) { std::lock_guard l(WifiTraceLock); fflush(MpEvFile); }
+    const char* path = getenv("WIDEMELON_WIFI_TRACE");
+    if (!path) return;
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    std::lock_guard l(WifiTraceLock);
+    for (const auto& [k, n] : WifiTraceHits)
+    {
+        const auto& [rw, what, pc, lr] = k;
+        if (what & 0x10000) fprintf(f, "%c RAM%s pc %08X lr %08X x%u\n", rw, (what & 1) ? "hi" : "lo", pc, lr, n);
+        else                fprintf(f, "%c %03X pc %08X lr %08X x%u\n", rw, what, pc, lr, n);
+    }
+    fclose(f);
+}
 
 
 //#define WIFI_LOG printf
@@ -385,6 +433,7 @@ void Wifi::SetIRQ(u32 irq)
 {
     u16 oldflags = IOPORT(W_IF) & IOPORT(W_IE);
 
+    if (kMpEvLogPath && IsMPClient) MpEvent(this, USTimestamp, 'i', (u16)irq, IOPORT(W_IE));
     IOPORT(W_IF) |= (1<<irq);
     CheckIRQ(oldflags);
 }
@@ -846,6 +895,7 @@ void Wifi::SendMPReply(u16 clienttime, u16 clientmask)
     // how does it work for default empty replies?
     slot->Rate = 2;
 
+    if (kMpEvLogPath) MpEvent(this, USTimestamp, 'c', IOPORT(W_TXSlotReply1), clienttime);
     IOPORT(W_TXSlotReply2) = IOPORT(W_TXSlotReply1);
     IOPORT(W_TXSlotReply1) = 0;
 
@@ -1699,6 +1749,9 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
         // timestamp it came with
         // we also need to determine how far we can run after having received this frame
 
+        if (kMpEvLogPath)
+            MpEvent(this, USTimestamp, MACEqual(&RXBuffer[12 + 4], MPCmdMAC) ? 'C' : MACEqual(&RXBuffer[12 + 4], MPAckMAC) ? 'A' : 'f',
+                    (u16)framelen, (u16)(timestamp > USTimestamp ? std::min<u64>(timestamp - USTimestamp, 0xFFFF) : 0));
         RXTimestamp = timestamp;
         if (RXTimestamp < USTimestamp) RXTimestamp = USTimestamp;
         NextSync = RXTimestamp + (framelen * (txrate==0x14 ? 4:8));
@@ -2009,6 +2062,7 @@ u16 Wifi::Read(u32 addr)
         return 0;
 
     addr &= 0x7FFE;
+    if (kWifiTrace) WifiTrace(NDS, 'r', addr);
 
     if (addr >= 0x4000 && addr < 0x6000)
     {
@@ -2112,6 +2166,16 @@ void Wifi::Write(u32 addr, u16 val)
         return;
 
     addr &= 0x7FFE;
+    if (kWifiTrace) WifiTrace(NDS, 'w', addr);
+    if (kMpEvLogPath && IsMPClient)
+        switch (addr)
+        {
+        case W_TXSlotReply1: case W_TXSlotReply2: case W_PowerState: case W_PowerForce: case W_PowerUS:
+        case W_TXReqReset: case W_TXReqSet: case W_IE: case W_IF: case W_RXCnt: case W_ModeReset: case W_PowerTX:
+            MpEvent(this, USTimestamp, 'w', (u16)addr, val);
+            break;
+        default: break;
+        }
 
     if (addr >= 0x4000 && addr < 0x6000)
     {

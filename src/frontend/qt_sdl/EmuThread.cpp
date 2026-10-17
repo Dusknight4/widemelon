@@ -59,6 +59,48 @@
 
 using namespace melonDS;
 
+// WideMelon testing: buttons from a script (WIDEMELON_TEST_INPUT), pressed
+// inside the emulator, one frame at a time, from when the launcher's savestate
+// is loaded (or from the start without one). Lines: "wait N", "tap KEY",
+// "hold KEY N"; others are skipped. Keys: a b select start right left up down r l x y.
+static u32 TestInputMask()
+{
+    static std::vector<u16> masks;
+    static size_t next = 0;
+    static const bool on = []
+    {
+        const char* path = getenv("WIDEMELON_TEST_INPUT");
+        if (!path || !path[0]) return false;
+        FILE* f = fopen(path, "r");
+        if (!f) return false;
+        static const char* names[] = {"a", "b", "select", "start", "right", "left", "up", "down", "r", "l", "x", "y"};
+        auto key = [](const char* k) -> u16
+        {
+            for (int i = 0; i < 12; i++) if (!strcmp(k, names[i])) return (u16)(0xFFF & ~(1u << i));
+            return 0xFFF;
+        };
+        char line[128], cmd[32], arg[32];
+        while (fgets(line, sizeof(line), f))
+        {
+            int n = 0;
+            const int got = sscanf(line, "%31s %31s %d", cmd, arg, &n);
+            if (got >= 2 && !strcmp(cmd, "wait")) masks.insert(masks.end(), atoi(arg), 0xFFF);
+            else if (got >= 2 && !strcmp(cmd, "tap"))
+            {
+                masks.insert(masks.end(), 6, key(arg));
+                masks.insert(masks.end(), 6, 0xFFF);
+            }
+            else if (got >= 3 && !strcmp(cmd, "hold")) masks.insert(masks.end(), n, key(arg));
+        }
+        fclose(f);
+        return true;
+    }();
+    if (!on || next >= masks.size()) return 0xFFF;
+    const char* state = getenv("WIDEMELON_LOAD_STATE");
+    if (state && state[0] && !WideMelon::TestStateLoaded) return 0xFFF;
+    return masks[next++];
+}
+
 
 EmuThread::EmuThread(EmuInstance* inst, QObject* parent) : QThread(parent)
 {
@@ -257,7 +299,7 @@ void EmuThread::run()
             }
 
             // process input and hotkeys
-            emuInstance->nds->SetKeyMask(emuInstance->inputMask);
+            emuInstance->nds->SetKeyMask(emuInstance->inputMask & TestInputMask());
 
             const u32 phoneTouch = emuInstance->phoneBridge
                 ? emuInstance->phoneBridge->remoteTouchSnapshot() : 0;

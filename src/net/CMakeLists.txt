@@ -7,6 +7,8 @@ add_library(net-utils STATIC
     PacketDispatcher.cpp
     LocalMP.cpp
     SimMP.cpp
+    DsBridge.cpp
+    BridgeMP.cpp
     LAN.cpp
     Netplay.cpp
     MPInterface.cpp

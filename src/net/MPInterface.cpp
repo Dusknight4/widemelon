@@ -20,6 +20,7 @@
 #include "LocalMP.h"
 #include "LAN.h"
 #include "SimMP.h"
+#include "BridgeMP.h"
 
 namespace melonDS
 {
@@ -52,6 +53,12 @@ void MPInterface::Set(MPInterfaceType type)
     {
     case MPInterface_Local:
         // WideMelon: over a simulated network, when the MP test launcher asks
+        if (BridgeMP::Wanted())
+        {
+            // WideMelon: with a remote DS over UDP, through the DS bridge
+            auto bridge = std::make_unique<BridgeMP>(BridgeMP::FromEnv());
+            if (bridge->Ok()) { Current = std::move(bridge); break; }
+        }
         if (SimMP::Wanted()) Current = std::make_unique<SimMP>();
         else Current = std::make_unique<LocalMP>();
         break;

@@ -1222,6 +1222,7 @@ void GPU::BlankFrame() noexcept
 
 void GPU::StartScanline(u32 line) noexcept
 {
+    if (NDS.ScanlineHook) NDS.ScanlineHook(&NDS, line);    // WideMelon: WM HLE testing
     /*
      * order of operations on hardware:
      * 1. VCount is incremented

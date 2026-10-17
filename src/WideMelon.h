@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 
@@ -44,6 +45,10 @@ inline bool BattleBackdropEnabled()
     }();
     return enabled;
 }
+
+// Testing: set once the launcher's savestate (WIDEMELON_LOAD_STATE) is loaded,
+// so a test input script (WIDEMELON_TEST_INPUT) starts from that point
+inline std::atomic<bool> TestStateLoaded {false};
 
 // Rounds down on both sides of the screen centre. Plain division rounds toward
 // zero, so left of centre it rounded the other way, and things there moved
