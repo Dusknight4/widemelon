@@ -19,7 +19,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#include <x86intrin.h>
 #include <inttypes.h>
 #include "NDS.h"
 #include "ARM.h"

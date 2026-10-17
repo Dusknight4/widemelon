@@ -24,7 +24,9 @@
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
 #include <immintrin.h>
+#endif
 
 #include "OpenGLSupport.h"
 
@@ -66,6 +68,16 @@ u64 SwapsQueued = 0;
 std::atomic<unsigned long long> Syncs {0};
 
 inline bool OnRenderThread() { return IsRender; }
+
+// a hint to the CPU while spinning
+inline void CpuRelax()
+{
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
+    _mm_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+    __asm__ volatile("yield");
+#endif
+}
 inline size_t AlignUp(size_t v) { return (v + 15) & ~size_t(15); }
 
 void WakeRender()
@@ -84,7 +96,7 @@ void WaitFor(const C& cond)
     for (int i = 0; i < 4000; i++)
     {
         if (cond()) return;
-        _mm_pause();
+        CpuRelax();
     }
     WakeRender();
     std::unique_lock lock(WakeMutex);
@@ -189,7 +201,7 @@ void RenderMain(std::function<void()> makeCurrent, std::function<void()> doneCur
             bool more = false;
             for (int i = 0; i < 2000 && !more; i++)
             {
-                _mm_pause();
+                CpuRelax();
                 more = WritePub.load(std::memory_order_acquire) != r || StopRequested.load();
             }
             if (!more)

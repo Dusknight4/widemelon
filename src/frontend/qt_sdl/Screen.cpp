@@ -1002,11 +1002,16 @@ void ScreenPanelGL::setSwapInterval(int intv)
 
 // WideMelon: OpenGL on its own thread, for the main window (one window only:
 // other windows have their own contexts, and opening one stops it for the
-// session). WIDEMELON_GLTHREAD=0 turns it off.
+// session). WIDEMELON_GLTHREAD=0 turns it off; on macOS it is off unless
+// WIDEMELON_GLTHREAD=1, as it hasn't been tried with Apple's OpenGL there.
 static bool GLThreadAllowed = []
 {
     const char* env = std::getenv("WIDEMELON_GLTHREAD");
+#ifdef __APPLE__
+    return env && env[0] == '1';
+#else
     return !(env && env[0] == '0');
+#endif
 }();
 
 void ScreenPanelGL::ctxMakeCurrent()
