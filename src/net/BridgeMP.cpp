@@ -306,9 +306,11 @@ void BridgeMP::Process()
     if (now - LastReport < 5000) return;
     LastReport = now;
     if (!Window.MsgsIn && !Window.MsgsOut) return;
-    char line[256];
-    std::snprintf(line, sizeof(line), "messages out %u, in %u; as host %u of %u exchanges answered, %u replies to an earlier CMD (taken anyway)%s",
+    char line[400];
+    std::snprintf(line, sizeof(line), "messages out %u, in %u; as host %u of %u exchanges answered, %u replies to an earlier CMD (taken anyway), waiting %.1f ms a round (longest %.0f); as client %u replies, %u \"not ready\" (longest run %u)%s",
                   Window.MsgsOut, Window.MsgsIn, Window.Answered, Window.Exchanges, Window.StaleReplies,
+                  Window.Exchanges ? Window.WaitMs / Window.Exchanges : 0.0, Window.WaitMaxMs,
+                  Window.Replies, Window.NotReady, Window.NotReadyRun,
                   now - LastHeard > 3000 ? "; the remote is silent" : "");
     Log(LogLevel::Info, "WideMelon bridge: %s\n", line);
     if (FILE* f = std::fopen("WideMelon bridge log.txt", "a"))
@@ -365,15 +367,29 @@ void BridgeMP::Send(int inst, u32 mpType, u16 aid, const u8* data, int len, u64 
     std::vector<DsBridge::Msg> msgs;
     std::vector<DsBridge::Frame> local;
     Proxy.FromLocal(mpType, aid, data, len, timestamp, msgs, local);
-    if (mpType == 1 && len >= 12 + 24) CurCmdSeq = (u16)(data[12 + 22] | data[12 + 23] << 8);
+    if (mpType == 1 && len >= 12 + 24) { CurCmdSeq = (u16)(data[12 + 22] | data[12 + 23] << 8); UsedReplyRef = 0xFFFF; }
     for (auto& f : local) Queue[f.MPType == 2 ? 1 : 0].push_back(std::move(f));
     for (auto& m : msgs)
     {
         if (m.Type == DsBridge::MsgType::Reply) m.RefSeq = LastCmdSeq;
+        // our ack to a real DS also says which of its replies we took this round (the CMD
+        // it answers; 0xFFFF none): the packets that one carried are the ones delivered.
+        // "Got it" alone it took for its latest reply, which over WiFi often comes a round
+        // late; when that one was lost, its packets were lost for good
+        if (m.Type == DsBridge::MsgType::Ack && RemoteIsDs && m.Body.size() == 4)
+        {
+            m.Body.push_back((u8)UsedReplyRef);
+            m.Body.push_back((u8)(UsedReplyRef >> 8));
+        }
         SendMsg(m);
         // to a real DS, each reply twice: we ack them ourselves (SendReply), so one
         // lost on the way would never be sent again (the DS drops the copy)
         if (m.Type == DsBridge::MsgType::Reply && RemoteIsDs && Cfg.LocalAck) SendMsg(m);
+        // and each CMD twice: our host takes the DS's reply as proof it got this CMD's
+        // packets, and over WiFi that reply is often a late one, to the CMD before; when
+        // this CMD was lost on the way, its packets were lost for good (the DS stood
+        // "Communicating"). The DS answers the copy with the same reply, nothing more.
+        if (m.Type == DsBridge::MsgType::Cmd && RemoteIsDs) SendMsg(m);
     }
     if (!local.empty()) Arrived.notify_all();
 }
@@ -407,6 +423,15 @@ int BridgeMP::SendReply(int inst, u8* data, int len, u64 timestamp, u16 aid)
     Send(inst, 2, aid, data, len, timestamp);
     if (!data || !len) return len;
     {
+        // for the log: a "not ready" reply (frame control 0x0158: the game's wireless code
+        // had no reply armed); a long run of them is the client firmware stuck
+        const bool notReady = len >= 14 && data[12] == 0x58 && data[13] == 0x01;
+        std::lock_guard l(Lock);
+        Window.Replies++;
+        if (notReady) { Window.NotReady++; if (++NotReadyRun > Window.NotReadyRun) Window.NotReadyRun = NotReadyRun; }
+        else NotReadyRun = 0;
+    }
+    {
         // With a real DS as host: the ack for this reply is made here, at once. The
         // game's MP layer wants it right after its reply, in its own time; the DS's
         // real one comes a network round trip later, and waiting for it took
@@ -423,6 +448,9 @@ int BridgeMP::SendReply(int inst, u8* data, int len, u64 timestamp, u16 aid)
                 a.Body[0] = (u8)LocalAckCounter; a.Body[1] = (u8)(LocalAckCounter >> 8);
                 a.Body[2] = 0; a.Body[3] = 0;       // no one missed
             }
+            // the sequence number of the CMD it closes, as a real host's ack has (the
+            // pattern's own, the same for every ack, was a frozen one)
+            a.Seq = LastCmdSeq;
             std::vector<DsBridge::Frame> frames;
             Proxy.FromRemote(a, frames);
             for (auto& f : frames)
@@ -550,7 +578,7 @@ u16 BridgeMP::RecvReplies(int inst, u8* data, u64 timestamp, u16 aidmask)
     // waits for it (the link's round trip), as a slow link needs
     if (!Mine(inst)) return 0;
     const bool waits = Cfg.HostWaitMs > 0;
-    const double until = NowMs() + Cfg.HostWaitMs;
+    const double waitFrom = NowMs(), until = waitFrom + Cfg.HostWaitMs;
     u16 cmdSeq;
     {
         std::lock_guard l(Lock);
@@ -558,25 +586,39 @@ u16 BridgeMP::RecvReplies(int inst, u8* data, u64 timestamp, u16 aidmask)
     }
     u16 got = 0;
     u32 stale = 0;
+    u16 usedRef = 0xFFFF;
     for (;;)
     {
         DsBridge::Frame f;
-        if (!Take(1, f, waits ? std::max(0.0, until - NowMs()) : 0)) break;
-        // a reply to an earlier CMD that came too late for it still counts, as
-        // the client's latest word: dropping it made the game resend and fall
-        // behind until talks failed (tested at 5-10 ms delay); melonDS's own
-        // local multiplayer takes it too. An emulated client, running in bursts,
-        // answers every CMD this late (always the one before), even on this PC
-        if (f.RefSeq != 0xFFFF && f.RefSeq != cmdSeq) stale++;
+        // (once every reply is in, any more already waiting are taken too: the newest one
+        // counts. Taking the oldest kept the host a round behind for good once a reply
+        // was late)
+        const bool allIn = (got & aidmask) == aidmask;
+        if (!Take(1, f, allIn ? 0 : waits ? std::max(0.0, until - NowMs()) : 0)) break;
+        const bool late = f.RefSeq != 0xFFFF && f.RefSeq != cmdSeq;
+        if (late) stale++;
+        // From a real DS, only a reply to this CMD counts: our host takes any reply as
+        // proof the DS got this CMD's packets, and a late one (to an earlier CMD, when
+        // this CMD was lost on the way) made it count lost packets as delivered: the
+        // DS then waited for them for good ("Communicating", seen in a trace). Without
+        // one, the host sends its packets again; the DS's own packets in the late reply
+        // are sent again too (our ack tells it which reply we took: none).
+        // From another WideMelon, a late reply still counts, as the client's latest word:
+        // dropping it made the game resend and fall behind until talks failed (tested at
+        // 5-10 ms delay); melonDS's own local multiplayer takes it too.
+        if (late && RemoteIsDs) continue;
+        usedRef = f.RefSeq;
         if (f.Aid >= 1 && f.Aid <= 15 && !f.Data.empty())
         {
             std::memcpy(&data[(f.Aid - 1) * 1024], f.Data.data(), std::min<size_t>(f.Data.size(), 1024));
             got |= 1 << f.Aid;
         }
-        if ((got & aidmask) == aidmask) break;
     }
     std::lock_guard l(Lock);
+    // the CMD the reply we took answers: told to a real DS in the ack (see Send)
+    UsedReplyRef = got ? usedRef : 0xFFFF;
     Total.Exchanges++; Window.Exchanges++;
+    { const double w = NowMs() - waitFrom; Window.WaitMs += w; Window.WaitMaxMs = std::max(Window.WaitMaxMs, w); }
     Total.StaleReplies += stale; Window.StaleReplies += stale;
     if ((got & aidmask) == aidmask) { Total.Answered++; Window.Answered++; }
     return got;

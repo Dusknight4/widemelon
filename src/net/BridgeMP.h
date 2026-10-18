@@ -89,7 +89,7 @@ public:
     u16 RecvReplies(int inst, u8* data, u64 timestamp, u16 aidmask) override;
 
     // for the test harness: counts since the start
-    struct Counts { u32 MsgsOut = 0, MsgsIn = 0, Exchanges = 0, Answered = 0, StaleReplies = 0; }; // stale: answered an earlier CMD
+    struct Counts { u32 MsgsOut = 0, MsgsIn = 0, Exchanges = 0, Answered = 0, StaleReplies = 0, Replies = 0, NotReady = 0, NotReadyRun = 0; double WaitMs = 0, WaitMaxMs = 0; };   // (client: replies sent, how many "not ready", the longest run of those) // stale: answered an earlier CMD
     Counts GetCounts();
 
 private:
@@ -122,6 +122,8 @@ private:
     bool HaveAckTemplate = false;
     u16 LocalAckCounter = 0;
     u64 LastAckUs = 0;                      // the last ack's time as handed to the local DS (emulation thread only)
+    u32 NotReadyRun = 0;                    // "not ready" replies in a row (for the log)
+    u16 UsedReplyRef = 0xFFFF;              // as host: the CMD the remote's reply we took this round answers (lock held)
     int Hand(const DsBridge::Frame& f, u8* data, u64* timestamp);  // to the local DS
     void RecvLoop();
 
