@@ -1250,6 +1250,45 @@ static void childAckTimeout(void)
 	put16(c + 4, SC_MPACK_IND);
 }
 
+// The newest CMD that had to wait (the ARM9 behind): handed to it as soon as it can take it.
+// Letting it go relied on the parent sending its data again, but its last CMD before it
+// leaves (a game ending a trade: its "done", then the disconnect) never comes again: the
+// game missed the "done" and ended the link in a blue screen (hardware, a cancel after a
+// trade). The parent's leaving waits for it too (s_lostPending).
+static struct { bool valid; BridgeMsg m; u8 body[0x240]; } s_heldCmd;
+static bool s_lostPending;
+static u32 s_lostAt;
+static void onCmd(const BridgeMsg* m);
+static void childLost(u16 reasonCode);
+
+static void holdCmd(const BridgeMsg* m)
+{
+	if (m->bodyLen > sizeof(s_heldCmd.body)) return;
+	if (m->body != s_heldCmd.body) memcpy(s_heldCmd.body, m->body, m->bodyLen);
+	s_heldCmd.m = *m;
+	s_heldCmd.m.body = s_heldCmd.body;
+	s_heldCmd.valid = true;
+}
+
+// (each pump and frame) the held CMD, if the ARM9 can take it now; then a parent's leaving
+// that waited for it
+static void childHeldTick(void)
+{
+	if (s_heldCmd.valid && (state() == ST_MP_CHILD) && cbRoom()) {
+		const u16 nextSel = (u16)(sget16(S_mp_recvBufSel) ^ 1);
+		if (!bufBusy(sget32(nextSel ? S_mp_recvBuf1 : S_mp_recvBuf0))) {
+			BridgeMsg m = s_heldCmd.m;
+			s_heldCmd.valid = false;
+			onCmd(&m);      // (may hold it again; the copy's body stays valid: holdCmd copies first)
+		}
+	}
+	if (s_lostPending && (!s_heldCmd.valid || W.frames - s_lostAt > 30)) {
+		s_lostPending = false;
+		s_heldCmd.valid = false;
+		if (state() == ST_CHILD || state() == ST_MP_CHILD) childLost(SC_DISCONNECTED);
+	}
+}
+
 static void onCmd(const BridgeMsg* m)
 {
 	if (state() != ST_MP_CHILD && state() != ST_CHILD) return;
@@ -1263,16 +1302,17 @@ static void onCmd(const BridgeMsg* m)
 		bridgeSend(DSB_Reply, sget16(S_aid), s_lastReply.seq, m->seq, 0x0118, s_lastReply.body, s_lastReply.len);
 		return;
 	}
-	// the ARM9 behind with its callbacks: this CMD is let go, as one lost on the air (no
-	// reply, so the parent sends its data again) rather than callbacks being lost
-	if (!cbRoom()) { W.nCmdsHeldBack++; return; }
+	// the ARM9 behind with its callbacks: this CMD waits (held, see holdCmd), unanswered as
+	// one lost on the air (the parent sends its data again), rather than callbacks being lost
+	if (!cbRoom()) { W.nCmdsHeldBack++; holdCmd(m); return; }
 	// likewise while the buffer this CMD would go in is still being read by the ARM9 (the
 	// game has two, used in turn): writing it gave the game wrong data (on hardware, a
 	// heavy trade screen; both games then ended the link in a blue screen)
 	{
 		const u16 nextSel = (u16)(sget16(S_mp_recvBufSel) ^ 1);
-		if (bufBusy(sget32(nextSel ? S_mp_recvBuf1 : S_mp_recvBuf0))) { W.nBufClobbered++; return; }
+		if (bufBusy(sget32(nextSel ? S_mp_recvBuf1 : S_mp_recvBuf0))) { W.nBufClobbered++; holdCmd(m); return; }
 	}
+	s_heldCmd.valid = false;    // (this one is newer than any held)
 	childAckTimeout();      // (the last round's ack never came: its MPACK_IND first)
 	W.lastCmdSeq = m->seq;
 	mpProgress();
@@ -1385,6 +1425,8 @@ static void onJoinOk(const BridgeMsg* m)
 	rqReset();
 	memset(s_childReplies, 0, sizeof(s_childReplies));
 	s_lastReply.valid = false;
+	s_heldCmd.valid = false;
+	s_lostPending = false;
 	u16 aid = 0;
 	if (!airParseAssocResp(m->body, m->bodyLen, &aid) || !aid) return;
 	W.connecting = false;
@@ -1407,6 +1449,8 @@ static void onJoinOk(const BridgeMsg* m)
 
 static void childLost(u16 reasonCode)
 {
+	s_heldCmd.valid = false;
+	s_lostPending = false;
 	stopMp();
 	setState(ST_IDLE);
 	u8* c = newCallback(API_START_CONNECT, ERR_SUCCESS, 0x1A);
@@ -1446,10 +1490,11 @@ void wmhlePump(void)
 	}
 	scanTick();
 	connectTick();
+	childHeldTick();
 	deliverCallbacks();
 }
 
-void wmhleDeliver(void) { deliverCallbacks(); }
+void wmhleDeliver(void) { childHeldTick(); deliverCallbacks(); }
 
 void wmhleFrame(void)
 {
@@ -1459,6 +1504,7 @@ void wmhleFrame(void)
 		if ((st == ST_PARENT || st == ST_MP_PARENT) && (s32)(W.frames - W.nextBeacon) >= 0) sendParentInfo();
 		if (st == ST_MP_PARENT) parentMpRound();
 		if (st == ST_PARENT || st == ST_MP_PARENT) leavePendingTick();
+		if (st == ST_CHILD || st == ST_MP_CHILD) childHeldTick();
 		if ((st == ST_CHILD || st == ST_MP_CHILD) && W.frames - W.lastFromParent > 120) childLost(SC_BEACON_LOST);
 		if (st == ST_MP_CHILD && W.waitingAck && W.frames - W.waitingAckFrame >= 2) childAckTimeout();
 		if (W.remoteParent && W.frames - W.remoteHeardAt > 300) W.remoteParent = false;
@@ -1518,8 +1564,11 @@ void wmhleBridgeRx(const uint8_t* msg, unsigned len)
 			// (WideMelon puts the deauth's target after the reason: one for an earlier
 			// attempt of ours, or for someone else, isn't this connection ending)
 			else if ((state() == ST_CHILD || state() == ST_MP_CHILD) && memcmp(m.mac, W.remoteMac, 6) == 0
-			         && (m.bodyLen < 8 || memcmp(m.body + 2, W.h->mac, 6) == 0 || (m.body[2] & 1)))
-				childLost(SC_DISCONNECTED);
+			         && (m.bodyLen < 8 || memcmp(m.body + 2, W.h->mac, 6) == 0 || (m.body[2] & 1))) {
+				// (a held CMD, its last data, reaches the game first: see s_heldCmd)
+				if (s_heldCmd.valid) { if (!s_lostPending) s_lostAt = W.frames; s_lostPending = true; }
+				else childLost(SC_DISCONNECTED);
+			}
 			break;
 		default: break;
 	}
