@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+#include <stdlib.h>
 #include "NDS.h"
 #include "ARM.h"
 #include "NDSCart.h"
@@ -47,6 +48,7 @@
 
 namespace melonDS
 {
+static void PxiTrace(int from, unsigned frame, unsigned val, const u8* ram, u32 ramMask);  // WideMelon: see below
 using namespace Platform;
 
 const s32 kMaxIterationCycles = 64;
@@ -3723,6 +3725,8 @@ void NDS::ARM9IOWrite32(u32 addr, u32 val)
             else
             {
                 bool wasempty = IPCFIFO9.IsEmpty();
+                PxiTrace(0, NumFrames, val, MainRAM, MainRAMMask);
+                if (PxiTap && PxiTap(this, val)) return;
                 IPCFIFO9.Write(val);
                 if ((IPCFIFOCnt7 & 0x0400) && wasempty)
                     SetIRQ(1, IRQ_IPCRecv);
@@ -4302,6 +4306,45 @@ void NDS::ARM7IOWrite16(u32 addr, u16 val)
     Log(LogLevel::Debug, "unknown ARM7 IO write16 %08X %04X %08X\n", addr, val, ARM7.R[15]);
 }
 
+// WideMelon: WIDEMELON_PXI_TRACE=<file> logs every word sent through the IPC
+// FIFO (the SDK's PXI: bits 0-4 tag, 5 error, 6-31 data), with the frame, to see
+// what the ARM9 asks of the ARM7 (and the other way)
+static void PxiTrace(int from, unsigned frame, unsigned val, const u8* ram, u32 ramMask)
+{
+    static FILE* f = nullptr;
+    static bool tried = false;
+    static unsigned lines = 0;
+    if (!tried)
+    {
+        tried = true;
+        if (const char* path = getenv("WIDEMELON_PXI_TRACE")) f = fopen(path, "w");
+    }
+    if (!f || lines >= 200000) return;
+    lines++;
+    fprintf(f, "%u %s tag %2u data %07X raw %08X\n", frame, from ? "7>9" : "9>7", val & 0x1F, val >> 6, val);
+    // the wireless (tag 10) messages point into main RAM: what's there
+    const u32 addr = val >> 6;
+    if ((val & 0x1F) == 10 && addr >= 0x02000000 && addr < 0x03000000)
+    {
+        fprintf(f, "    @%07X:", addr);
+        for (int i = 0; i < 64; i += 2)
+            fprintf(f, " %04X", ram[(addr + i) & ramMask] | (ram[(addr + i + 1) & ramMask] << 8));
+        fprintf(f, "\n");
+    }
+    if (lines % 64 == 0) fflush(f);
+}
+
+void NDS::InjectArm7Fifo(u32 val)
+{
+    // as the ARM7 writing IPCFIFOSEND
+    if (IPCFIFO7.IsFull()) return;
+    bool wasempty = IPCFIFO7.IsEmpty();
+    PxiTrace(1, NumFrames, val, MainRAM, MainRAMMask);
+    IPCFIFO7.Write(val);
+    if ((IPCFIFOCnt9 & 0x0400) && wasempty)
+        SetIRQ(0, IRQ_IPCRecv);
+}
+
 void NDS::ARM7IOWrite32(u32 addr, u32 val)
 {
     switch (addr)
@@ -4357,6 +4400,7 @@ void NDS::ARM7IOWrite32(u32 addr, u32 val)
             else
             {
                 bool wasempty = IPCFIFO7.IsEmpty();
+                PxiTrace(1, NumFrames, val, MainRAM, MainRAMMask);
                 IPCFIFO7.Write(val);
                 if ((IPCFIFOCnt9 & 0x0400) && wasempty)
                     SetIRQ(0, IRQ_IPCRecv);

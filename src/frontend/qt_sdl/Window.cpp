@@ -78,6 +78,7 @@
 #include "version.h"
 #include "Savestate.h"
 #include "MPInterface.h"
+#include "BridgeMP.h"
 #include "LANDialog.h"
 
 //#include "main_shaders.h"
@@ -428,6 +429,13 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
 
                 actMPNewInstance = submenu->addAction("Launch new instance");
                 connect(actMPNewInstance, &QAction::triggered, this, &MainWindow::onMPNewInstance);
+
+                // WideMelon: local wireless with a real DS (3DS/DSi running the game under the
+                // modified nds-bootstrap) over WiFi; remembered, listens on UDP port 7071
+                actMPDSBridge = submenu->addAction("Connect a real DS (WiFi bridge)");
+                actMPDSBridge->setCheckable(true);
+                actMPDSBridge->setChecked(Config::GetGlobalTable().GetBool("MP.DSBridge"));
+                connect(actMPDSBridge, &QAction::triggered, this, &MainWindow::onMPDSBridge);
 
                 submenu->addSeparator();
 
@@ -1416,6 +1424,18 @@ bool MainWindow::preloadROMs(QStringList file, QStringList gbafile, bool boot)
                 QMessageBox::critical(this, "melonDS", errorstr);
                 return false;
             }
+
+            // WideMelon testing: start from a savestate (set by a test launcher)
+            if (const char* state = getenv("WIDEMELON_LOAD_STATE"); state && state[0])
+            {
+                if (emuThread->loadState(state))
+                {
+                    emuInstance->osdAddMessage(0, "State loaded from %s", state);
+                    WideMelon::TestStateLoaded = true;
+                }
+                else
+                    emuInstance->osdAddMessage(0xFFA0A0, "State load failed: %s", state);
+            }
         }
         else
         {
@@ -2065,6 +2085,23 @@ void MainWindow::onOpenTitleManager()
 void MainWindow::onMPNewInstance()
 {
     createEmuInstance();
+}
+
+void MainWindow::onMPDSBridge(bool checked)
+{
+    auto cfg = Config::GetGlobalTable();
+    cfg.SetBool("MP.DSBridge", checked);
+    Config::Save();
+    BridgeMP::SetUserEnabled(checked);
+    // at once, unless a LAN game is on (it goes back to local wireless afterwards, with
+    // this setting); the game paused while the wireless is swapped under it
+    if (MPInterface::GetType() == MPInterface_Local)
+    {
+        const bool running = emuThread->emuIsRunning();
+        if (running) emuThread->emuPause();
+        setMPInterface(MPInterface_Local);
+        if (running) emuThread->emuUnpause();
+    }
 }
 
 void MainWindow::onLANStartHost()
