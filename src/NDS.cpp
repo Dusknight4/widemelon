@@ -4309,11 +4309,43 @@ void NDS::ARM7IOWrite16(u32 addr, u16 val)
 // WideMelon: WIDEMELON_PXI_TRACE=<file> logs every word sent through the IPC
 // FIFO (the SDK's PXI: bits 0-4 tag, 5 error, 6-31 data), with the frame, to see
 // what the ARM9 asks of the ARM7 (and the other way)
+// WIDEMELON_PXI_RING=<file>: the same, but only the last 30000 words are kept (in memory), and
+// written out (appended) whenever the ARM9 asks for WM Reset or End: what the game's wireless
+// did just before it shut down, however long the session ran
+static void PxiRing(int from, unsigned frame, unsigned val, const u8* ram, u32 ramMask)
+{
+    static const char* path = getenv("WIDEMELON_PXI_RING");
+    if (!path) return;
+    static char ring[30000][200];
+    static unsigned next = 0, count = 0;
+    char* line = ring[next];
+    int n = snprintf(line, 200, "%u %s tag %2u data %07X raw %08X", frame, from ? "7>9" : "9>7", val & 0x1F, val >> 6, val);
+    const u32 addr = val >> 6;
+    const bool wm = (val & 0x1F) == 10 && addr >= 0x02000000 && addr < 0x03000000;
+    for (int i = 0; wm && i < 48 && n < 190; i += 2)
+        n += snprintf(line + n, 200 - n, " %04X", ram[(addr + i) & ramMask] | (ram[(addr + i + 1) & ramMask] << 8));
+    next = (next + 1) % 30000;
+    if (count < 30000) count++;
+    // the ARM9 asking for WM Reset (1) or End (2): the game is shutting its wireless down
+    const u16 apiid = wm ? (u16)(ram[addr & ramMask] | (ram[(addr + 1) & ramMask] << 8)) : 0xFFFF;
+    if (from == 0 && wm && (apiid == 1 || apiid == 2))
+    {
+        if (FILE* f = fopen(path, "a"))
+        {
+            fprintf(f, "==== WM %s requested at frame %u: the last %u words ====\n", apiid == 1 ? "Reset" : "End", frame, count);
+            for (unsigned k = 0; k < count; k++) fprintf(f, "%s\n", ring[(next + 30000 - count + k) % 30000]);
+            fclose(f);
+        }
+        count = 0;
+    }
+}
+
 static void PxiTrace(int from, unsigned frame, unsigned val, const u8* ram, u32 ramMask)
 {
     static FILE* f = nullptr;
     static bool tried = false;
     static unsigned lines = 0;
+    PxiRing(from, frame, val, ram, ramMask);
     if (!tried)
     {
         tried = true;
