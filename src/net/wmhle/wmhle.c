@@ -188,7 +188,7 @@ static struct {
 	u32 lastProgress, maxGap;   // MP rounds: the frame of the last one, the longest wait between two (for the log)
 	u32 nextUid;                // SendPacket uids
 	u32 inFlightBuf;            // the receive buffer of the callback the ARM9 has now
-	u32 nBufClobbered;          // (log) CMDs that overwrote a receive buffer callbacks still pointed into
+	u32 nBufClobbered;          // (log) CMDs let go: their receive buffer still pointed into by unread callbacks
 } W;
 
 // ---- little helpers on DS memory ----
@@ -1029,6 +1029,14 @@ static bool roundRepliesIn(void)
 
 static void parentMpFinish(void);
 
+// the receive buffer the open round's result goes in is free: no callback the ARM9 hasn't
+// read points into it (writing it then gave the game wrong data: seen on hardware with a
+// heavy trade screen, the game ending the link in a blue screen); the round waits instead
+static bool parentBufFree(void)
+{
+	return !bufBusy(sget32(sget16(S_mp_recvBufSel) ? S_mp_recvBuf1 : S_mp_recvBuf0));
+}
+
 static void parentMpRound(void)
 {
 	// a round still waiting for its replies stays open a little (up to ROUND_MAX_FRAMES):
@@ -1037,7 +1045,7 @@ static void parentMpRound(void)
 	// Union Room's talk then never got through). The rounds go at the link's pace instead.
 	if (s_round.pending) {
 		if (!roundRepliesIn() && W.frames - s_round.startFrame < ROUND_MAX_FRAMES) return;
-		if (!cbRoom()) return;           // (the ARM9 is behind with its callbacks: the round waits)
+		if (!cbRoom() || !parentBufFree()) return;   // (the ARM9 is behind with its callbacks: the round waits)
 		parentMpFinish();
 	}
 	if (!cbRoom()) return;               // (likewise no new round)
@@ -1207,6 +1215,13 @@ static void onCmd(const BridgeMsg* m)
 	// the ARM9 behind with its callbacks: this CMD is let go, as one lost on the air (no
 	// reply, so the parent sends its data again) rather than callbacks being lost
 	if (!cbRoom()) { W.nCmdsHeldBack++; return; }
+	// likewise while the buffer this CMD would go in is still being read by the ARM9 (the
+	// game has two, used in turn): writing it gave the game wrong data (on hardware, a
+	// heavy trade screen; both games then ended the link in a blue screen)
+	{
+		const u16 nextSel = (u16)(sget16(S_mp_recvBufSel) ^ 1);
+		if (bufBusy(sget32(nextSel ? S_mp_recvBuf1 : S_mp_recvBuf0))) { W.nBufClobbered++; return; }
+	}
 	childAckTimeout();      // (the last round's ack never came: its MPACK_IND first)
 	W.lastCmdSeq = m->seq;
 	mpProgress();
@@ -1214,10 +1229,6 @@ static void onCmd(const BridgeMsg* m)
 	const u16 pollBitmap = get16(m->body + 2);
 
 	// a WMMpRecvBuf: header fields as the hardware gives them, then the frame body
-	{   // (log) the buffer this CMD goes in: still pointed into by callbacks the ARM9 hasn't read?
-		const u16 nextSel = (u16)(sget16(S_mp_recvBufSel) ^ 1);
-		if (bufBusy(sget32(nextSel ? S_mp_recvBuf1 : S_mp_recvBuf0))) W.nBufClobbered++;
-	}
 	sset16(S_mp_recvBufSel, (u16)(sget16(S_mp_recvBufSel) ^ 1));
 	const u32 rb = sget32(sget16(S_mp_recvBufSel) ? S_mp_recvBuf1 : S_mp_recvBuf0);
 	fill(rb, 0, 0x2C);
@@ -1406,7 +1417,7 @@ void wmhleFrame(void)
 			logNum("wmhle: mpdata/portrecv, sendok/sendfail", W.nMpData << 16 | (W.nPortRecv & 0xFFFF), W.nPortSendOk << 16 | (W.nPortSendFail & 0xFFFF));
 			logNum("wmhle: dups dropped, reply copies", W.nDupDropped, W.nReplyCopies);
 			logNum("wmhle: callbacks queued / hand-over busy, CMDs held back", (W.cbIn - W.cbOut) << 16 | (rd16(CALLBACK_CONTROL) & 1), W.nCmdsHeldBack);
-			logNum("wmhle: receive buffers overwritten while read", W.nBufClobbered, 0);
+			logNum("wmhle: CMDs let go (receive buffer still being read)", W.nBufClobbered, 0);
 			if ((st == ST_MP_PARENT && (sget16(S_child_bitmap) & ~1)) || st == ST_MP_CHILD) {   // (a parent with no one linked has no rounds)
 				if (W.lastProgress && W.frames - W.lastProgress > W.maxGap) W.maxGap = W.frames - W.lastProgress;
 				logNum("wmhle: longest gap between MP rounds (frames)", W.maxGap, 0);
@@ -1446,7 +1457,7 @@ void wmhleBridgeRx(const uint8_t* msg, unsigned len)
 				if (!s_round.pending) break;
 				rqTake();
 				// all in: the round closes now (its ack goes out at once, not next frame)
-				if (state() == ST_MP_PARENT && roundRepliesIn() && cbRoom()) parentMpFinish();
+				if (state() == ST_MP_PARENT && roundRepliesIn() && cbRoom() && parentBufFree()) parentMpFinish();
 			}
 			break;
 		case DSB_Ack:    onAck(&m); break;
