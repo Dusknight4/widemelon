@@ -251,6 +251,14 @@ void BridgeMP::RecvLoop()
 
 void BridgeMP::FromRemote(const DsBridge::Msg& m)
 {
+    // (for the log: the remote leaving or ending the link, and what was still waiting here)
+    if (m.Type == DsBridge::MsgType::Leave)
+        if (FILE* f = std::fopen("WideMelon bridge log.txt", "a"))
+        {
+            std::fprintf(f, "[%.1f s] the remote left (or ended the link); here still queued: %zu replies, %zu other frames\n",
+                         NowMs() / 1000.0, Queue[1].size(), Queue[0].size());
+            std::fclose(f);
+        }
     std::vector<DsBridge::Frame> frames;
     Proxy.FromRemote(m, frames);
     for (auto& f : frames)
@@ -369,6 +377,15 @@ void BridgeMP::Send(int inst, u32 mpType, u16 aid, const u8* data, int len, u64 
     Proxy.FromLocal(mpType, aid, data, len, timestamp, msgs, local);
     if (mpType == 1 && len >= 12 + 24) { CurCmdSeq = (u16)(data[12 + 22] | data[12 + 23] << 8); UsedReplyRef = 0xFFFF; }
     for (auto& f : local) Queue[f.MPType == 2 ? 1 : 0].push_back(std::move(f));
+    for (const auto& m : msgs)
+        if (m.Type == DsBridge::MsgType::Leave)
+            if (FILE* f = std::fopen("WideMelon bridge log.txt", "a"))
+            {
+                // (for the log: this side's game leaving or ending the link)
+                std::fprintf(f, "[%.1f s] this game left (or ended the link); still queued here: %zu replies, %zu other frames\n",
+                             NowMs() / 1000.0, Queue[1].size(), Queue[0].size());
+                std::fclose(f);
+            }
     for (auto& m : msgs)
     {
         if (m.Type == DsBridge::MsgType::Reply) m.RefSeq = LastCmdSeq;

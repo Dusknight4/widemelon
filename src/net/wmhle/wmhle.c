@@ -172,6 +172,7 @@ static struct {
 	bool connecting;
 	u32 connectStart;
 	u32 lastFromParent;
+	u32 lastCmdFrame;           // (log) the frame we last took a CMD (child)
 	// MP
 	SendPacket sendq[SEND_QUEUE];
 	u16 nextSeqNo[16];          // per port, for the ports with sequence numbers
@@ -854,6 +855,7 @@ static bool childHasQueuedReply(u16 aid);    // (below, with the reply queue)
 
 static void childLeaveNow(u16 a)
 {
+	logNum("wmhle: a child left: aid, its leave waited (frames)", a, (s_leavePending & (1 << a)) ? W.frames - s_leaveAt[a] : 0);
 	u8 mac[6];
 	memcpy(mac, M(W.status + S_childMacAddress + 6 * (a - 1)), 6);
 	s_leavePending &= (u16)~(1 << a);
@@ -1327,6 +1329,7 @@ static void onCmd(const BridgeMsg* m)
 	s_heldCmd.valid = false;    // (this one is newer than any held)
 	childAckTimeout();      // (the last round's ack never came: its MPACK_IND first)
 	W.lastCmdSeq = m->seq;
+	W.lastCmdFrame = W.frames;
 	mpProgress();
 	const u16 myAid = sget16(S_aid);
 	const u16 pollBitmap = get16(m->body + 2);
@@ -1461,6 +1464,10 @@ static void onJoinOk(const BridgeMsg* m)
 
 static void childLost(u16 reasonCode)
 {
+	// (for the log, when a link ends: why, whether a CMD was still held, frames since the last
+	// CMD we took and since we last heard the parent, ARM9 callbacks still queued)
+	logNum("wmhle: link to the parent ended: reason, held CMD", reasonCode, s_heldCmd.valid);
+	logNum("wmhle:   frames since last CMD taken / heard, callbacks queued", (u32)((W.frames - W.lastCmdFrame) & 0xFFFF) << 16 | ((W.frames - W.lastFromParent) & 0xFFFF), W.cbIn - W.cbOut);
 	s_heldCmd.valid = false;
 	s_lostPending = false;
 	stopMp();
