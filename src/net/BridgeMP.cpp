@@ -83,7 +83,8 @@ BridgeMP::BridgeMP(const Config& config) noexcept : Cfg(config)
     }
     sockaddr_in local {};
     local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_ANY);
+    // (WIDEMELON_BRIDGE_LOOPBACK: only this PC can reach it; for tests)
+    local.sin_addr.s_addr = htonl(std::getenv("WIDEMELON_BRIDGE_LOOPBACK") ? INADDR_LOOPBACK : INADDR_ANY);
     local.sin_port = htons(Cfg.Port);
     if (bind(s, (sockaddr*)&local, sizeof(local)) != 0)
     {
