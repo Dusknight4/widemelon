@@ -84,6 +84,7 @@ set(SOURCES_QT_SDL
     phone/phone.qrc
 
     LANDialog.cpp
+    OnlineLocalDialog.cpp
     NetplayDialog.cpp
 )
 

@@ -80,6 +80,7 @@
 #include "MPInterface.h"
 #include "BridgeMP.h"
 #include "LANDialog.h"
+#include "OnlineLocalDialog.h"
 
 //#include "main_shaders.h"
 
@@ -436,6 +437,11 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
                 actMPDSBridge->setCheckable(true);
                 actMPDSBridge->setChecked(Config::GetGlobalTable().GetBool("MP.DSBridge"));
                 connect(actMPDSBridge, &QAction::triggered, this, &MainWindow::onMPDSBridge);
+
+                // WideMelon: local wireless with a friend's WideMelon over the internet (a room
+                // name and password; see net/OnlineLocal.h)
+                actMPOnline = submenu->addAction("Online as Local...");
+                connect(actMPOnline, &QAction::triggered, this, &MainWindow::onMPOnline);
 
                 submenu->addSeparator();
 
@@ -2085,6 +2091,11 @@ void MainWindow::onOpenTitleManager()
 void MainWindow::onMPNewInstance()
 {
     createEmuInstance();
+}
+
+void MainWindow::onMPOnline()
+{
+    OnlineLocalDialog::openDlg(this, emuThread);
 }
 
 void MainWindow::onMPDSBridge(bool checked)

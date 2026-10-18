@@ -115,6 +115,7 @@ static FILE* FrameLog()
 #include "Savestate.h"
 
 #include "EmuInstance.h"
+#include "OnlineLocal.h"
 
 using namespace melonDS;
 
@@ -409,6 +410,9 @@ void EmuThread::run()
             // RTC sync
             emuInstance->syncRTC();
 
+
+            // WideMelon: "Online as Local" puts its WM HLE in place of the first console's wireless while on
+            if (emuInstance->getInstanceID() == 0) OnlineLocal::Frame(emuInstance->nds);
 
             // emulate
             u32 nlines;

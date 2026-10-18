@@ -136,6 +136,7 @@ private slots:
     void onOpenTitleManager();
     void onMPNewInstance();
     void onMPDSBridge(bool checked);
+    void onMPOnline();
     void onLANStartHost();
     void onLANStartClient();
     void onNPStartHost();
@@ -272,6 +273,7 @@ public:
     QAction* actTitleManager;
     QAction* actMPNewInstance;
     QAction* actMPDSBridge;
+    QAction* actMPOnline;
     QAction* actLANStartHost;
     QAction* actLANStartClient;
     QAction* actNPStartHost;

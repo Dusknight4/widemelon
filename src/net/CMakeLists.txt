@@ -9,6 +9,10 @@ add_library(net-utils STATIC
     SimMP.cpp
     DsBridge.cpp
     BridgeMP.cpp
+    OnlineRelay.cpp
+    OnlineLocal.cpp
+    wmhle/wmhle.c
+    wmhle/wmhle_air.c
     LAN.cpp
     Netplay.cpp
     MPInterface.cpp
@@ -35,4 +39,10 @@ else()
     pkg_check_modules(ENet REQUIRED IMPORTED_TARGET libenet)
     fix_interface_includes(PkgConfig::ENet)
     target_link_libraries(net-utils PUBLIC PkgConfig::ENet)
+endif()
+
+# "Online as Local"'s room server on its own (for a PC or server that stays on)
+add_executable(widemelon-room-server OnlineRelayMain.cpp OnlineRelay.cpp)
+if (WIN32)
+    target_link_libraries(widemelon-room-server PRIVATE ws2_32)
 endif()
