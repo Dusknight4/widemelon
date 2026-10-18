@@ -1270,6 +1270,18 @@ static void holdCmd(const BridgeMsg* m)
 	s_heldCmd.valid = true;
 }
 
+// a held CMD still gets an answer, if it polls us: the hardware's "not ready" one (empty,
+// frame control 0x0158), as a real child's chip gives when its game has no reply ready.
+// The parent knows we're there and sends its data again; nothing counts as delivered.
+// Silence instead (no reply for half a second while the game saved after a trade) made a
+// HeartGold host end the link: blue screens on both on leaving the trade room.
+static void replyNotReady(const BridgeMsg* m)
+{
+	const u16 myAid = sget16(S_aid);
+	if (m->bodyLen < 4 || !((get16(m->body + 2) >> myAid) & 1)) return;
+	bridgeSend(DSB_Reply, myAid, W.cmdSeq += 0x10, m->seq, 0x0158, NULL, 0);
+}
+
 // (each pump and frame) the held CMD, if the ARM9 can take it now; then a parent's leaving
 // that waited for it
 static void childHeldTick(void)
@@ -1304,13 +1316,13 @@ static void onCmd(const BridgeMsg* m)
 	}
 	// the ARM9 behind with its callbacks: this CMD waits (held, see holdCmd), unanswered as
 	// one lost on the air (the parent sends its data again), rather than callbacks being lost
-	if (!cbRoom()) { W.nCmdsHeldBack++; holdCmd(m); return; }
+	if (!cbRoom()) { W.nCmdsHeldBack++; holdCmd(m); replyNotReady(m); return; }
 	// likewise while the buffer this CMD would go in is still being read by the ARM9 (the
 	// game has two, used in turn): writing it gave the game wrong data (on hardware, a
 	// heavy trade screen; both games then ended the link in a blue screen)
 	{
 		const u16 nextSel = (u16)(sget16(S_mp_recvBufSel) ^ 1);
-		if (bufBusy(sget32(nextSel ? S_mp_recvBuf1 : S_mp_recvBuf0))) { W.nBufClobbered++; holdCmd(m); return; }
+		if (bufBusy(sget32(nextSel ? S_mp_recvBuf1 : S_mp_recvBuf0))) { W.nBufClobbered++; holdCmd(m); replyNotReady(m); return; }
 	}
 	s_heldCmd.valid = false;    // (this one is newer than any held)
 	childAckTimeout();      // (the last round's ack never came: its MPACK_IND first)
