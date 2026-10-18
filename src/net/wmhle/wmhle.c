@@ -847,18 +847,41 @@ static void dropPacketsFor(u16 aid)
 	}
 }
 
+// a child's leaving, waiting for its last reply to reach the game (see onChildLeave)
+static u16 s_leavePending;
+static u32 s_leaveAt[MAX_CHILD + 1];
+static bool childHasQueuedReply(u16 aid);    // (below, with the reply queue)
+
+static void childLeaveNow(u16 a)
+{
+	u8 mac[6];
+	memcpy(mac, M(W.status + S_childMacAddress + 6 * (a - 1)), 6);
+	s_leavePending &= (u16)~(1 << a);
+	sset16(S_child_bitmap, (u16)(sget16(S_child_bitmap) & ~(1 << a)));
+	dropPacketsFor(a);
+	u8* c = newCallback(API_START_PARENT, ERR_SUCCESS, 0x30);
+	put16(c + 8, SC_DISCONNECTED);
+	memcpy(c + 0x0A, mac, 6);
+	put16(c + 0x10, a);
+	put16(c + 0x12, 1);
+}
+
 static void onChildLeave(const BridgeMsg* m)
 {
 	for (u16 a = 1; a <= MAX_CHILD; a++) {
 		if (!(sget16(S_child_bitmap) & (1 << a))) continue;
 		if (memcmp(M(W.status + S_childMacAddress + 6 * (a - 1)), m->mac, 6) != 0) continue;
-		sset16(S_child_bitmap, (u16)(sget16(S_child_bitmap) & ~(1 << a)));
-		dropPacketsFor(a);
-		u8* c = newCallback(API_START_PARENT, ERR_SUCCESS, 0x30);
-		put16(c + 8, SC_DISCONNECTED);
-		memcpy(c + 0x0A, m->mac, 6);
-		put16(c + 0x10, a);
-		put16(c + 0x12, 1);
+		// A child's last reply often comes just before it leaves (a game ending a trade
+		// sends its "done" and disconnects at once). Taking the child out now threw that
+		// reply away, still queued for the next round: the game never got the "done" and
+		// ended the link in a blue screen (hardware: cancel in the trade room, a DS host).
+		// So it leaves once that reply has reached the game (at most 30 frames later).
+		if (childHasQueuedReply(a)) {
+			if (!(s_leavePending & (1 << a))) s_leaveAt[a] = W.frames;
+			s_leavePending |= (u16)(1 << a);
+			continue;
+		}
+		childLeaveNow(a);
 	}
 }
 
@@ -1006,6 +1029,7 @@ static void rqReset(void)
 {
 	s_rqCount = 0;
 	memset(s_rqLast, 0, sizeof(s_rqLast));
+	s_leavePending = 0;     // (a new session: nobody waiting to leave)
 	s_round.pending = false;
 }
 
@@ -1030,6 +1054,22 @@ static void rqTake(void)
 #define ROUND_WAIT_US 0      // no waiting in the VBlank IRQ (the ARM7 held the main RAM bus: graphics glitches);
                              // the reply closes the round from the next poll (VBlank or the mid-frame timer)
 #define ROUND_MAX_FRAMES 3     // a round waits this many frames at most for its replies
+
+static bool childHasQueuedReply(u16 aid)
+{
+	if (s_round.pending && ((s_round.children >> aid) & 1) && s_replyIn[aid]) return true;
+	for (int i = 0; i < s_rqCount; i++) if (s_rq[i].aid == aid) return true;
+	return false;
+}
+
+// children whose leaving waited for their last reply: they go now that it's delivered
+// (or after 30 frames, whatever happened)
+static void leavePendingTick(void)
+{
+	if (!s_leavePending) return;
+	for (u16 a = 1; a <= MAX_CHILD; a++)
+		if ((s_leavePending & (1 << a)) && (!childHasQueuedReply(a) || W.frames - s_leaveAt[a] > 30)) childLeaveNow(a);
+}
 
 static bool roundRepliesIn(void)
 {
@@ -1182,6 +1222,7 @@ static void parentMpFinish(void)
 		put16(ack + 4 + 2 * (a - 1), s_replyIn[a] && s_replyLen[a] >= 2 ? s_replyRef[a] : 0xFFFF);
 	}
 	bridgeSend(DSB_Ack, 0, W.cmdSeq, 0xFFFF, 0x0218, ack, an);
+	leavePendingTick();     // (a child that left once its last reply was in: now)
 }
 
 // ---- the child: the parent's MP rounds ----
@@ -1417,6 +1458,7 @@ void wmhleFrame(void)
 		const u16 st = state();
 		if ((st == ST_PARENT || st == ST_MP_PARENT) && (s32)(W.frames - W.nextBeacon) >= 0) sendParentInfo();
 		if (st == ST_MP_PARENT) parentMpRound();
+		if (st == ST_PARENT || st == ST_MP_PARENT) leavePendingTick();
 		if ((st == ST_CHILD || st == ST_MP_CHILD) && W.frames - W.lastFromParent > 120) childLost(SC_BEACON_LOST);
 		if (st == ST_MP_CHILD && W.waitingAck && W.frames - W.waitingAckFrame >= 2) childAckTimeout();
 		if (W.remoteParent && W.frames - W.remoteHeardAt > 300) W.remoteParent = false;
