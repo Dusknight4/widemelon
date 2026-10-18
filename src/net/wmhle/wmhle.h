@@ -47,6 +47,8 @@ void wmhleInit(const WmHleHost* host);
 
 // testing: log every port packet received (set by the host)
 extern int g_wmhleTracePorts;
+// testing: log every request and callback (the DS logs only notable ones: each line costs ARM7 time)
+extern int g_wmhleVerbose;
 
 // a tag-10 word from the ARM9 (its data: a pointer to the request). On the DS
 // this comes in the FIFO interrupt, so it only queues; wmhlePump does the work

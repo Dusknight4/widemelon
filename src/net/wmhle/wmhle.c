@@ -296,9 +296,16 @@ static void deliverCallbacks(void)
 		QueuedCallback* c = &W.cb[W.cbOut++ % CB_QUEUE];
 		{
 			const u16 api = get16(c->data);
-			if ((api != API_START_SCAN && api != API_END_SCAN && api != API_SET_MP_DATA && api < 128 && api != API_START_MP
+			// (every routine one only with g_wmhleVerbose: on the DS each line costs ARM7 time the
+			// game's graphics feel; the Union Room's parent/scan cycle makes many)
+			const u16 cst = get16(c->data + 8);
+			const bool notable = get16(c->data + 2) != ERR_SUCCESS
+			                     || ((api == API_START_CONNECT || api == API_START_PARENT) && (cst == SC_CONNECTED || cst == SC_DISCONNECTED))
+			                     || api == API_INITIALIZE || api == API_END;
+			if ((g_wmhleVerbose || notable) && (
+			     (api != API_START_SCAN && api != API_END_SCAN && api != API_SET_MP_DATA && api < 128 && api != API_START_MP
 			     && !(api == API_START_PARENT && get16(c->data + 8) == SC_BEACON_SENT))
-			    || (g_wmhleTracePorts && get16(c->data + 2) != ERR_SUCCESS && api != API_PORT_SEND))   // (testing: every error)
+			    || (g_wmhleTracePorts && get16(c->data + 2) != ERR_SUCCESS && api != API_PORT_SEND)))   // (testing: every error)
 				logNum("wmhle: callback api/err, state/aid", (u32)api << 16 | get16(c->data + 2), (u32)get16(c->data + 8) << 16 | get16(c->data + 0xA));
 		}
 		W.inFlightBuf = c->buf;
@@ -655,7 +662,9 @@ static void runRequest(u32 req)
 	if (apiid >= API_ASYNC_KIND_MAX) return;
 	if (apiid != API_INITIALIZE && apiid != API_ENABLE && !W.initialized) return;
 	if (W.initialized) { sset16(S_apiBusy, 1); sset16(S_BusyApiid, apiid); }
-	if (apiid != API_SET_MP_DATA && apiid != API_START_SCAN && apiid != API_END_SCAN) logNum("wmhle: request", apiid, state());
+	if (apiid != API_SET_MP_DATA && apiid != API_START_SCAN && apiid != API_END_SCAN
+	    && (g_wmhleVerbose || apiid == API_INITIALIZE || apiid == API_END || apiid == API_START_CONNECT || apiid == API_DISCONNECT))   // (routine ones: verbose only)
+		logNum("wmhle: request", apiid, state());
 
 	switch (apiid) {
 		case API_INITIALIZE:
@@ -889,6 +898,7 @@ static unsigned buildPackets(u8* out, unsigned room, bool parent, SendPacket** s
 }
 
 int g_wmhleTracePorts;      // (testing, set by the host) log every port packet received
+int g_wmhleVerbose;         // (testing, set by the host) log every request and callback, stats every 2 s (else 10 s)
 // port packets in a received body: one PORT_RECV callback each
 static void parsePackets(u16 fromAid, const u8* mac, const u8* body, unsigned len, u32 recvBuf, u32 bodyAddr)
 {
@@ -1410,7 +1420,7 @@ void wmhleFrame(void)
 		if ((st == ST_CHILD || st == ST_MP_CHILD) && W.frames - W.lastFromParent > 120) childLost(SC_BEACON_LOST);
 		if (st == ST_MP_CHILD && W.waitingAck && W.frames - W.waitingAckFrame >= 2) childAckTimeout();
 		if (W.remoteParent && W.frames - W.remoteHeardAt > 300) W.remoteParent = false;
-		if (st >= ST_CLASS1 && st != ST_SCAN && W.frames % 120 == 0) {
+		if (st >= ST_CLASS1 && st != ST_SCAN && W.frames % (g_wmhleVerbose ? 120 : 600) == 0) {
 			logNum("wmhle: state, rx join/joinok/cmd/ack", st, (u32)W.rxCount[2] << 24 | (u32)W.rxCount[3] << 16 | (u32)(W.rxCount[4] & 0xFF) << 8 | (W.rxCount[6] & 0xFF));
 			logNum("wmhle: tx join/joinok/cmd/reply/ack", (u32)W.txCount[2] << 24 | (u32)W.txCount[3] << 16 | (u32)W.txCount[4], (u32)W.txCount[5] << 16 | W.txCount[6]);
 			if (st == ST_MP_PARENT) logNum("wmhle: replies lost (queue full)", W.staleReplies, 0);
