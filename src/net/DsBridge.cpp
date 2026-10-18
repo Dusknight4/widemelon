@@ -9,6 +9,7 @@
     any later version.
 */
 
+#include <algorithm>
 #include <cstring>
 #include "DsBridge.h"
 
@@ -238,8 +239,10 @@ void Proxy::FromRemote(const Msg& m, std::vector<Frame>& toLocal)
             break;
 
         case MsgType::Ack:
+            // (only the air's 4 bytes: a wmhle host adds, per child, which reply it took,
+            // for wmhle children; the emulated firmware gets the ack as on the air)
             toLocal.push_back(MakeFrame(3, m.FrameCtl, m.Duration, kMacMPAck, m.Mac, m.Mac, m.Seq,
-                                        m.Body.data(), m.Body.size(), m.Channel, m.Timestamp, m.EmuHeader));
+                                        m.Body.data(), std::min<size_t>(m.Body.size(), 4), m.Channel, m.Timestamp, m.EmuHeader));
             break;
 
         case MsgType::Leave:

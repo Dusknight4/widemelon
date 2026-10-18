@@ -1149,11 +1149,21 @@ static void parentMpFinish(void)
 	put16(c + 0x20, children);
 	sset16(S_mp_recvBufSel, (u16)(sel ^ 1));
 
-	// the ack closes the round
-	u8 ack[4];
+	// the ack closes the round. After the missing bitmap, for each aid up to the highest
+	// polled, the CMD the reply we took from that child answers (0xFFFF none): the child
+	// completes exactly the packets that reply carried (as WideMelon's host does for aid 1;
+	// without it, over a lossy link one wmhle child took "got it" for its latest reply when
+	// we had taken an older one, and its lost packets left both games "Communicating")
+	u8 ack[4 + 2 * MAX_CHILD];
 	put16(ack, ++W.ackCounter);
 	put16(ack + 2, missing);
-	bridgeSend(DSB_Ack, 0, W.cmdSeq, 0xFFFF, 0x0218, ack, 4);
+	unsigned an = 4;
+	for (u16 a = 1; a <= MAX_CHILD; a++) {
+		if (!((children >> a) & 1)) continue;
+		while (an < 4 + 2u * a) { put16(ack + an, 0xFFFF); an += 2; }
+		put16(ack + 4 + 2 * (a - 1), s_replyIn[a] && s_replyLen[a] >= 2 ? s_replyRef[a] : 0xFFFF);
+	}
+	bridgeSend(DSB_Ack, 0, W.cmdSeq, 0xFFFF, 0x0218, ack, an);
 }
 
 // ---- the child: the parent's MP rounds ----
@@ -1279,7 +1289,9 @@ static void onAck(const BridgeMsg* m)
 	// taken for our latest reply, so when that one was lost its packets were lost for
 	// good (the game stood "Communicating" or gave up the link).
 	if (m->bodyLen >= 6) {
-		const u16 used = get16(m->body + 4);
+		// (a wmhle host: one per aid; WideMelon's: one, for its only remote)
+		const u16 aid = sget16(S_aid);
+		const u16 used = aid >= 1 && m->bodyLen >= 4u + 2 * aid ? get16(m->body + 4 + 2 * (aid - 1)) : get16(m->body + 4);
 		if (gotIt && used != 0xFFFF)
 			for (int k = 0; k < CHILD_REPLIES; k++) {
 				ChildReply* r = &s_childReplies[k];
