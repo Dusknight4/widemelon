@@ -277,6 +277,25 @@ static bool bufBusy(u32 buf)
 #define CB_RESERVE 12
 static bool cbRoom(void) { return CB_QUEUE - (W.cbIn - W.cbOut) >= CB_RESERVE; }
 
+// (testing: g_wmhleBusyTest = chance per frame in 1000 of the ARM9 "falling behind" for 10-40
+// frames, as a real game does while it saves: the child holds CMDs then, see holdCmd)
+int g_wmhleBusyTest;
+static bool busyTest(void)
+{
+	static u32 until, lastFrame, rng = 12345;
+	if (!g_wmhleBusyTest) return false;
+	if (W.frames != lastFrame) {
+		lastFrame = W.frames;
+		rng = rng * 1103515245u + 12345u;
+		{
+			// (negative: short blips of 1-2 frames, the held CMD let through before the ack comes)
+			const u32 chance = (u32)(g_wmhleBusyTest < 0 ? -g_wmhleBusyTest : g_wmhleBusyTest);
+			if (W.frames >= until && (rng >> 16) % 1000 < chance) until = W.frames + (g_wmhleBusyTest < 0 ? 1 + (rng >> 8) % 2 : 10 + (rng >> 8) % 31);
+		}
+	}
+	return W.frames < until;
+}
+
 static void rqReset(void);   // (the MP reply queue: emptied for a new session)
 
 // the simple form: {apiid, errcode, wlCmdID 0, wlResult 0}
@@ -1257,7 +1276,8 @@ static void childAckTimeout(void)
 // leaves (a game ending a trade: its "done", then the disconnect) never comes again: the
 // game missed the "done" and ended the link in a blue screen (hardware, a cancel after a
 // trade). The parent's leaving waits for it too (s_lostPending).
-static struct { bool valid; BridgeMsg m; u8 body[0x240]; } s_heldCmd;
+static struct { bool valid; bool answered; BridgeMsg m; u8 body[0x240]; } s_heldCmd;   // (answered: "not ready" sent for it)
+static bool s_releaseAnswered;     // (onCmd, for a held CMD let through: it was answered "not ready" already)
 static bool s_lostPending;
 static u32 s_lostAt;
 static void onCmd(const BridgeMsg* m);
@@ -1266,6 +1286,8 @@ static void childLost(u16 reasonCode);
 static void holdCmd(const BridgeMsg* m)
 {
 	if (m->bodyLen > sizeof(s_heldCmd.body)) return;
+	const bool same = s_heldCmd.valid && s_heldCmd.m.seq == m->seq;
+	s_heldCmd.answered = same && s_heldCmd.answered;
 	if (m->body != s_heldCmd.body) memcpy(s_heldCmd.body, m->body, m->bodyLen);
 	s_heldCmd.m = *m;
 	s_heldCmd.m.body = s_heldCmd.body;
@@ -1282,18 +1304,21 @@ static void replyNotReady(const BridgeMsg* m)
 	const u16 myAid = sget16(S_aid);
 	if (m->bodyLen < 4 || !((get16(m->body + 2) >> myAid) & 1)) return;
 	bridgeSend(DSB_Reply, myAid, W.cmdSeq += 0x10, m->seq, 0x0158, NULL, 0);
+	s_heldCmd.answered = true;
 }
 
 // (each pump and frame) the held CMD, if the ARM9 can take it now; then a parent's leaving
 // that waited for it
 static void childHeldTick(void)
 {
-	if (s_heldCmd.valid && (state() == ST_MP_CHILD) && cbRoom()) {
+	if (s_heldCmd.valid && (state() == ST_MP_CHILD) && cbRoom() && !busyTest()) {
 		const u16 nextSel = (u16)(sget16(S_mp_recvBufSel) ^ 1);
 		if (!bufBusy(sget32(nextSel ? S_mp_recvBuf1 : S_mp_recvBuf0))) {
 			BridgeMsg m = s_heldCmd.m;
 			s_heldCmd.valid = false;
+			s_releaseAnswered = s_heldCmd.answered;
 			onCmd(&m);      // (may hold it again; the copy's body stays valid: holdCmd copies first)
+			s_releaseAnswered = false;
 		}
 	}
 	if (s_lostPending && (!s_heldCmd.valid || W.frames - s_lostAt > 30)) {
@@ -1313,12 +1338,12 @@ static void onCmd(const BridgeMsg* m)
 	// data lost for good; a host also resends one it got no reply to): the same reply
 	// again, and nothing more to the ARM9 (it has had this one)
 	if (s_lastReply.valid && m->seq == s_lastReply.cmdSeq) {
-		bridgeSend(DSB_Reply, sget16(S_aid), s_lastReply.seq, m->seq, 0x0118, s_lastReply.body, s_lastReply.len);
+		bridgeSend(DSB_Reply, sget16(S_aid), s_lastReply.seq, m->seq, s_lastReply.len ? 0x0118 : 0x0158, s_lastReply.body, s_lastReply.len);   // (no body: it was "not ready")
 		return;
 	}
 	// the ARM9 behind with its callbacks: this CMD waits (held, see holdCmd), unanswered as
 	// one lost on the air (the parent sends its data again), rather than callbacks being lost
-	if (!cbRoom()) { W.nCmdsHeldBack++; holdCmd(m); replyNotReady(m); return; }
+	if (!cbRoom() || busyTest()) { W.nCmdsHeldBack++; holdCmd(m); replyNotReady(m); return; }
 	// likewise while the buffer this CMD would go in is still being read by the ARM9 (the
 	// game has two, used in turn): writing it gave the game wrong data (on hardware, a
 	// heavy trade screen; both games then ended the link in a blue screen)
@@ -1361,6 +1386,19 @@ static void onCmd(const BridgeMsg* m)
 	if (m->bodyLen > 4) parsePackets(0, m->mac, m->body + 4, m->bodyLen - 4, rb, rb + 0x30);
 
 	if (!polled) return;
+	// A held CMD we already answered "not ready": its data has now gone to the game, but no
+	// second reply. The parent took the "not ready" as our reply to it, and its ack names this
+	// CMD: a real reply under the same CMD would have its packets counted delivered by that
+	// ack, though the parent threw the late reply away (both games then stood "Communicating"
+	// after a trade, on hardware). Our packets go in the next reply instead; a copy of this
+	// CMD gets "not ready" again (s_lastReply with no body).
+	if (s_releaseAnswered) {
+		s_lastReply.valid = true;
+		s_lastReply.cmdSeq = m->seq;
+		s_lastReply.seq = W.cmdSeq;
+		s_lastReply.len = 0;
+		return;
+	}
 	// our reply: what's queued for the parent (resent until its ack says it got it)
 	u8 body[0x220];
 	unsigned n = buildPackets(body, sget16(S_mp_sendSize), false, s_childSent, &s_childNsent);

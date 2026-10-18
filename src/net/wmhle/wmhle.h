@@ -49,6 +49,8 @@ void wmhleInit(const WmHleHost* host);
 extern int g_wmhleTracePorts;
 // testing: log every request and callback (the DS logs only notable ones: each line costs ARM7 time)
 extern int g_wmhleVerbose;
+// testing: chance per frame (in 1000) of a 10-40 frame stretch where the ARM9 looks too busy
+extern int g_wmhleBusyTest;
 
 // a tag-10 word from the ARM9 (its data: a pointer to the request). On the DS
 // this comes in the FIFO interrupt, so it only queues; wmhlePump does the work
