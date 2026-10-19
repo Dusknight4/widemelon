@@ -56,6 +56,7 @@ BridgeMP::Config BridgeMP::FromEnv()
         if (std::strcmp(b, "listen") != 0) c.Peer = b;
     if (const char* p = std::getenv("WIDEMELON_BRIDGE_PORT")) c.Port = (u16)std::atoi(p);
     if (const char* h = std::getenv("WIDEMELON_BRIDGE_HOST_WAIT_MS")) c.HostWaitMs = std::max(0.0, std::atof(h));
+    if (const char* h = std::getenv("WIDEMELON_BRIDGE_HOST_FIT_FRAME")) c.HostFitFrame = h[0] != '0';
     if (const char* w = std::getenv("WIDEMELON_BRIDGE_CLIENT_WAIT_MS")) c.ClientWaitMs = std::max(0.0, std::atof(w));
     if (const char* a = std::getenv("WIDEMELON_BRIDGE_ACK_WAIT_MS")) c.AckWaitMs = std::max(0.0, std::atof(a));
     if (const char* b = std::getenv("WIDEMELON_BRIDGE_PACE_TO_DS")) c.PaceToDs = b[0] != '0';
@@ -626,7 +627,12 @@ u16 BridgeMP::RecvReplies(int inst, u8* data, u64 timestamp, u16 aidmask)
     // waits for it (the link's round trip), as a slow link needs
     if (!Mine(inst)) return 0;
     const bool waits = Cfg.HostWaitMs > 0;
-    const double waitFrom = NowMs(), until = waitFrom + Cfg.HostWaitMs;
+    const double waitFrom = NowMs();
+    // (within the frame's spare time: never a frame lost to waiting; see HostFitFrame)
+    double budget = Cfg.HostWaitMs;
+    if (Cfg.HostFitFrame && EmuNowAt > 0)
+        budget = std::max(std::min(EmuAheadMs(), Cfg.HostWaitMs), std::min(Cfg.HostMinWaitMs, Cfg.HostWaitMs));
+    const double until = waitFrom + budget;
     u16 cmdSeq;
     {
         std::lock_guard l(Lock);
