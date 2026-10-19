@@ -4386,13 +4386,67 @@ static void GameWatchOut(unsigned frame, const char* text)
     if (f) { fprintf(f, "%u %s\n", frame, text); fflush(f); }
 }
 
+// When the watch sees the comm state move during a link (or an error field change), the whole ARM9
+// side is saved to "WideMelon game watch dump <frame>.bin", and again 30 frames later, at most 16
+// files: "HGWD", version 1, frame, 0; R0-R15, CPSR, R_FIQ[8], R_SVC[3], R_ABT[3], R_IRQ[3], R_UND[3],
+// DTCMBase, DTCMMask; at 0x100 DTCM (16 KB), then ITCM (32 KB), then main RAM (4 MB). A game stopped
+// in an error screen still has the call stack that led there in it.
+static NDS* GameWatchNds = nullptr;
+static unsigned GameWatchDumps = 0, GameWatchDumpAgain = 0;
+
+static void GameWatchDump(NDS& nds, const char* why)
+{
+    if (GameWatchDumps >= 16) return;
+    GameWatchDumps++;
+    char name[96];
+    snprintf(name, sizeof name, "WideMelon game watch dump %u.bin", (unsigned)nds.NumFrames);
+    if (FILE* f = fopen(name, "wb"))
+    {
+        u32 head[64] = {};
+        memcpy(head, "HGWD", 4);
+        head[1] = 1; head[2] = nds.NumFrames;
+        ARMv5& a = nds.ARM9;
+        u32* p = &head[4];
+        for (int i = 0; i < 16; i++) *p++ = a.R[i];
+        *p++ = a.CPSR;
+        for (int i = 0; i < 8; i++) *p++ = a.R_FIQ[i];
+        for (int i = 0; i < 3; i++) *p++ = a.R_SVC[i];
+        for (int i = 0; i < 3; i++) *p++ = a.R_ABT[i];
+        for (int i = 0; i < 3; i++) *p++ = a.R_IRQ[i];
+        for (int i = 0; i < 3; i++) *p++ = a.R_UND[i];
+        *p++ = a.DTCMBase; *p++ = a.DTCMMask;
+        fwrite(head, 1, sizeof head, f);
+        fwrite(a.DTCM, 1, DTCMPhysicalSize, f);
+        fwrite(a.ITCM, 1, ITCMPhysicalSize, f);
+        fwrite(nds.MainRAM, 1, 0x400000, f);
+        fclose(f);
+        char line[200];
+        snprintf(line, sizeof line, "saved %s (%s): PC %08X LR %08X SP %08X CPSR %08X", name, why, a.R[15], a.R[14], a.R[13], a.CPSR);
+        GameWatchOut(nds.NumFrames, line);
+    }
+}
+
+static void GameWatchEvent(unsigned frame, const char* why)
+{
+    if (!GameWatchNds) return;
+    GameWatchDump(*GameWatchNds, why);
+    GameWatchDumpAgain = frame + 30;
+}
+
 static void GameWatchFrame(NDS& nds)
 {
     static const bool on = getenv("WIDEMELON_PXI_RING") != nullptr;
     if (!on) return;
     static HgWatch watch;
+    GameWatchNds = &nds;
     watch.Out = GameWatchOut;
+    watch.Event = GameWatchEvent;
     watch.Frame(nds.MainRAM, nds.MainRAMMask, nds.NumFrames);
+    if (GameWatchDumpAgain && nds.NumFrames >= GameWatchDumpAgain)
+    {
+        GameWatchDumpAgain = 0;
+        GameWatchDump(nds, "30 frames later");
+    }
 }
 
 void NDS::InjectArm7Fifo(u32 val)

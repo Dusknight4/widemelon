@@ -37,6 +37,12 @@ struct HgWatch
     unsigned RamMask = 0;
     unsigned FrameNo = 0;
     void (*Out)(unsigned frame, const char* text) = nullptr;
+    // called when the comm state machine moves while a link is up (report set) or an error field
+    // changes: the moment to save the CPU's state (HeartGold's failed-assert screen, for one, stops
+    // the link through CommState_StopForReset with nothing in the error fields)
+    void (*Event)(unsigned frame, const char* why) = nullptr;
+    unsigned LastFunc = 0, LastErr = 0;
+    bool LastLinked = false;
 
     unsigned CommState = 0, Wireless = 0, Core = 0;
     std::string Last[3];
@@ -98,7 +104,7 @@ struct HgWatch
     void Frame(const unsigned char* ram, unsigned ramMask, unsigned frame)
     {
         Ram = ram; RamMask = ramMask; FrameNo = frame;
-        if (CommState && !IsCommState(CommState)) { Say("CommStateWork gone"); CommState = 0; Last[0].clear(); }
+        if (CommState && !IsCommState(CommState)) { Say("CommStateWork gone"); CommState = 0; Last[0].clear(); LastFunc = 0; LastLinked = false; }
         if (Wireless && !IsWireless(Wireless)) { Say("CommWirelessWork gone"); Wireless = 0; Last[1].clear(); }
         if (Core && !IsCore(Core)) { Say("gCommCore.work gone"); Core = 0; Last[2].clear(); }
         // (CommWirelessWork is allocated right after CommStateWork: looked at there first)
@@ -111,6 +117,15 @@ struct HgWatch
             std::snprintf(b, sizeof b, "state %08X linkMode %u watch %u report %u errScreen %u errKind %u members %u", R32(a + 0x28), R8(a + 0x52),
                           R8(a + 0x57), R8(a + 0x58), R8(a + 0x5A), R8(a + 0x61), R8(a + 0x4F));
             if (Last[0] != b) { Say("comm %s (timer %d)", b, (int)R32(a + 0x48)); Last[0] = b; }
+            const unsigned func = R32(a + 0x28), err = R8(a + 0x5A) << 8 | R8(a + 0x61);
+            const bool linked = R8(a + 0x58) == 1;
+            if (Event && LastFunc && ((func != LastFunc && (linked || LastLinked)) || err != LastErr))
+            {
+                char w[96];
+                std::snprintf(w, sizeof w, "state %08X -> %08X, errScreen/errKind %04X", LastFunc, func, err);
+                Event(FrameNo, w);
+            }
+            LastFunc = func; LastErr = err; LastLinked = linked;
         }
         if (Wireless)
         {
