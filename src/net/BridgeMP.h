@@ -145,6 +145,14 @@ private:
     u16 LastCmdSeq = 0xFFFF;                // local client: the last CMD handed to it
     double LastHello = -1e9, LastReport = 0, LastHeard = -1e9;
     Counts Total, Window;
+
+    // the last few seconds of messages both ways, with their contents (the games' data in
+    // each CMD/reply): written to "WideMelon link capture.txt" whenever a link ends, to see
+    // exactly what a game had last before it gave up (lock held)
+    struct CapEntry { double T; bool Out; u8 Type; u16 Seq, Ref, Aid; std::vector<u8> Body; };
+    std::deque<CapEntry> Capture;
+    void CaptureMsg(bool out, const DsBridge::Msg& m);
+    void DumpCapture(const char* why);
 };
 
 }

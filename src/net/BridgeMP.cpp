@@ -179,6 +179,7 @@ void BridgeMP::RecvLoop()
         if (!m.Parse(buf.data(), (size_t)n)) continue;
 
         std::lock_guard l(Lock);
+        CaptureMsg(false, m);
         // listening: answer whoever writes to us
         if (Cfg.Peer.empty())
         {
@@ -259,6 +260,7 @@ void BridgeMP::FromRemote(const DsBridge::Msg& m)
             std::fprintf(f, "[%.1f s] the remote left (or ended the link); here still queued: %zu replies, %zu other frames\n",
                          NowMs() / 1000.0, Queue[1].size(), Queue[0].size());
             std::fclose(f);
+            DumpCapture("the remote left");
         }
     std::vector<DsBridge::Frame> frames;
     Proxy.FromRemote(m, frames);
@@ -280,9 +282,36 @@ void BridgeMP::PumpDelayed()
     }
 }
 
+void BridgeMP::CaptureMsg(bool out, const DsBridge::Msg& m)
+{
+    if (m.Type == DsBridge::MsgType::Hello || m.Type == DsBridge::MsgType::Log) return;
+    const double now = NowMs();
+    Capture.push_back({now, out, (u8)m.Type, m.Seq, m.RefSeq, m.Aid, m.Body});
+    while (!Capture.empty() && (now - Capture.front().T > 4000 || Capture.size() > 3000)) Capture.pop_front();
+}
+
+void BridgeMP::DumpCapture(const char* why)
+{
+    FILE* f = std::fopen("WideMelon link capture.txt", "a");
+    if (!f) return;
+    const double now = NowMs();
+    std::fprintf(f, "=== [%.1f s] %s: the last %zu messages (ms before now, out/in, type, seq, ref, aid, body)\n",
+                 now / 1000.0, why, Capture.size());
+    static const char* names[] = {"?", "info", "join", "joinok", "cmd", "reply", "ack", "leave", "hello", "log"};
+    for (const auto& e : Capture)
+    {
+        std::fprintf(f, "%8.1f %s %-6s %04X %04X %u %3zu ", e.T - now, e.Out ? "out" : "in ",
+                     e.Type < 10 ? names[e.Type] : "?", e.Seq, e.Ref, e.Aid, e.Body.size());
+        for (u8 b : e.Body) std::fprintf(f, "%02X", b);
+        std::fputc('\n', f);
+    }
+    std::fclose(f);
+}
+
 void BridgeMP::SendMsg(DsBridge::Msg& m)
 {
     if (!PeerKnown) return;
+    CaptureMsg(true, m);
     const std::vector<u8> wire = m.Serialize();
     sendto(Sock, (const char*)wire.data(), (int)wire.size(), 0, (const sockaddr*)PeerAddr, sizeof(sockaddr_in));
     Total.MsgsOut++;
@@ -386,6 +415,7 @@ void BridgeMP::Send(int inst, u32 mpType, u16 aid, const u8* data, int len, u64 
                 std::fprintf(f, "[%.1f s] this game left (or ended the link); still queued here: %zu replies, %zu other frames\n",
                              NowMs() / 1000.0, Queue[1].size(), Queue[0].size());
                 std::fclose(f);
+                DumpCapture("this game left");
             }
     for (auto& m : msgs)
     {
