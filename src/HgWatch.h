@@ -70,6 +70,7 @@ struct HgWatch
         return R8(a + 0x6B8) < 2 && R16(a + 0x694) < 0x100 && R8(a + 0x6B0) < 2;
     }
     bool Linked() const { return CommState && R8(CommState + 0x57) == 1; }
+    unsigned CoreKey() const { const unsigned k = Wireless ? R16(Wireless + 0xD8E) : 0; return k != 0xFFFF && k > 1 ? k : 0; }
 
     template <class... A> void Say(const char* f, A... a)
     {
@@ -86,7 +87,8 @@ struct HgWatch
         {
             if (!(CommState && IsCommState(CommState)) && IsCommState(a)) { CommState = a; Say("found CommStateWork at %08X", a); }
             if (!(Wireless && IsWireless(Wireless)) && IsWireless(a)) { Wireless = a; Say("found CommWirelessWork at %08X", a); }
-            if (Linked() && !(Core && IsCore(Core)) && IsCore(a)) { Core = a; Say("found gCommCore.work at %08X", a); }
+            // (found while its players bitmap still equals the one CommWirelessWork took as firstCount)
+            if (Linked() && CoreKey() && !(Core && IsCore(Core)) && IsCore(a) && R16(a + 0x694) == CoreKey()) { Core = a; Say("found gCommCore.work at %08X", a); }
         }
         ScanAt = end >= 0x02400000 - 0xE00 ? 0x02000000 : end;
     }
