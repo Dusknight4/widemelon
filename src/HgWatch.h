@@ -21,7 +21,8 @@
 //     profile +0xD78, ruleset +0xD7C, ggid +0xD80, beaconBuffer +0xD84, beacon +0xD88 (rounded up
 //     to 32), firstCount +0xD8E, shutdown +0xD92, flags +0xD95 (bit 0 linkLost, 1 detectDrops,
 //     2 lostWhenAlone)
-//   gCommCore.work: command rings at +0x51C (12 bytes each, carved from the buffer at +0x48C),
+//   gCommCore.work: command rings at +0x51C and +0x4B0 (12 bytes each, one per player, 5;
+//     those at +0x51C carved from the buffer at +0x48C), the two parent frames at +0x80/+0x140,
 //     players bitmap +0x694, link error flag +0x6B8, backlog counters +0x668 (child), +0x66C (per player)
 #ifndef HGWATCH_H
 #define HGWATCH_H
@@ -61,7 +62,7 @@ struct HgWatch
     {
         const unsigned base = R32(a + 0x48C);
         if (!InRam(base)) return false;
-        for (int k = 0; k < 8; k++)
+        for (int k = 0; k < 5; k++)
         {
             const unsigned p = R32(a + 0x51C + 12 * k);
             if (!InRam(R32(a + 0x4B0 + 12 * k)) || p < base || p >= base + 0x10000) return false;
