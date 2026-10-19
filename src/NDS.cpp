@@ -391,6 +391,85 @@ bool NDS::NeedsDirectBoot() const
     return false;
 }
 
+// WideMelon: Pokemon HeartGold/SoulSilver keep at most 32 tasks on their VBlank task queue (made at
+// boot: movs r0, #32 for its size, movs r0, #32 for its init, str r0, [r1, #0x1C] into gSystem).
+// Coming back to the overworld after a Union Room trade or battle screen, the field creates its
+// effects in one go and ~30 of them queue a VBlank texture transfer; when no VBlank falls inside
+// that burst the 33rd SysTask_Create fails, and with a link up that failed GF_ASSERT is the blue
+// "An error has occurred" screen (HeartGold through the DS bridge, every time: 32 tasks queued,
+// 29 of them those transfers; the test rig's runs never passed 28). This makes the queue 64 (1 KB
+// more of the main arena, taken at boot). The ARM9 binary is compressed: it is unpacked here as
+// the game's start-up code would (MIi_UncompressBackward), patched, and marked as unpacked
+// (module params compressed_static_end = 0, which that code then skips). Only when the exact
+// instructions are found once. WIDEMELON_HG_VBLANK_QUEUE=0 leaves the game as it is.
+void NDS::FixHgVBlankQueue(const NDSHeader& header, const u8* cartrom, u32 romlen)
+{
+    if (strncmp(header.GameCode, "IPK", 3) != 0 && strncmp(header.GameCode, "IPG", 3) != 0) return;
+    if (const char* e = getenv("WIDEMELON_HG_VBLANK_QUEUE"); e && e[0] == '0') return;
+    const u32 base = header.ARM9RAMAddress, size = header.ARM9Size;
+    if (base != 0x02000000 || size == 0 || size > 0x3F0000 || (u64)header.ARM9ROMOffset + size + 8 > romlen) return;
+    u8* ram = MainRAM;
+    auto rd = [&](u32 a) { u32 v; memcpy(&v, &ram[(a - base) & MainRAMMask], 4); return v; };
+    auto wr = [&](u32 a, u32 v) { memcpy(&ram[(a - base) & MainRAMMask], &v, 4); };
+    // the module params, from the "nitrocode" footer after the ARM9 binary in the ROM
+    u32 footer[2];
+    memcpy(footer, &cartrom[header.ARM9ROMOffset + size], 8);
+    if (footer[0] != 0xDEC00621 || footer[1] + 0x20 > size) return;
+    const u32 params = base + footer[1];
+    u32 end = base + size;
+    if (const u32 cend = rd(params + 0x14))
+    {
+        // MIi_UncompressBackward, in place: the footer before cend gives the compressed length (low
+        // 24 bits), the header length (top 8 bits) and how much longer the data gets
+        if (cend <= base + 8 || cend > base + size) return;
+        const u32 word = rd(cend - 8), extra = rd(cend - 4);
+        const u32 complen = word & 0xFFFFFF, hdrlen = word >> 24;
+        if (complen > cend - base || hdrlen < 8 || hdrlen > complen || (u64)cend + extra > base + 0x3F0000) return;
+        u32 src = cend - hdrlen - base, dst = cend + extra - base;
+        const u32 lo = cend - complen - base;
+        while (src > lo)
+        {
+            u8 ctrl = ram[--src];
+            for (int i = 0; i < 8 && src > lo; i++, ctrl <<= 1)
+            {
+                if (ctrl & 0x80)
+                {
+                    if (src < lo + 2) return;
+                    const u8 b1 = ram[src - 1], b2 = ram[src - 2];
+                    src -= 2;
+                    const u32 disp = (((b1 & 0xF) << 8) | b2) + 3;
+                    for (int n = (b1 >> 4) + 3; n > 0; n--) { dst--; ram[dst] = ram[dst + disp]; }
+                }
+                else
+                {
+                    dst--; ram[dst] = ram[--src];
+                }
+            }
+        }
+        wr(params + 0x14, 0);
+        end = cend + extra;
+    }
+    // the VBlank queue's creation: movs r0, #32; bl; adds r1, r0, #0; movs r0, #0; movs r2, #4; blx;
+    // adds r1, r0, #0; movs r0, #32; bl; ldr r1, [pc, #x]; str r0, [r1, #0x1C]
+    static const u8 want[28] = {0x20,0x20, 0,0xF0,0,0xF8, 0x01,0x1C, 0x00,0x20, 0x04,0x22, 0,0xF0,0,0xE8, 0x01,0x1C, 0x20,0x20, 0,0xF0,0,0xF8, 0,0x49, 0xC8,0x61};
+    static const u8 mask[28] = {0xFF,0xFF, 0,0xF8,0,0xF8, 0xFF,0xFF, 0xFF,0xFF, 0xFF,0xFF, 0,0xF8,0,0xF8, 0xFF,0xFF, 0xFF,0xFF, 0,0xF8,0,0xF8, 0,0xFF, 0xFF,0xFF};
+    u32 found = 0, count = 0;
+    for (u32 a = 0; a + 28 <= end - base; a += 2)
+    {
+        bool ok = true;
+        for (int i = 0; i < 28 && ok; i++) ok = (ram[a + i] & mask[i]) == want[i];
+        if (ok) { found = a; count++; }
+    }
+    if (count != 1)
+    {
+        Log(LogLevel::Info, "HeartGold VBlank queue fix: instructions not found (%u matches), game left as it is\n", count);
+        return;
+    }
+    ram[found] = 0x40;          // movs r0, #64 (the size)
+    ram[found + 18] = 0x40;     // movs r0, #64 (the init)
+    Log(LogLevel::Info, "HeartGold VBlank queue fix: 32 -> 64 tasks at %08X\n", base + found);
+}
+
 void NDS::SetupDirectBoot()
 {
     const NDSHeader& header = NDSCartSlot.GetCart()->GetHeader();
@@ -451,6 +530,8 @@ void NDS::SetupDirectBoot()
         u32 tmp = *(u32*)&cartrom[header.ARM9ROMOffset+i];
         NDS::ARM9Write32(header.ARM9RAMAddress+i, tmp);
     }
+
+    FixHgVBlankQueue(header, cartrom, NDSCartSlot.GetCart()->GetROMLength());
 
     for (u32 i = 0; i < header.ARM7Size; i+=4)
     {

@@ -100,10 +100,31 @@ struct HgWatch
         ScanAt = end >= 0x02400000 - 0xE00 ? 0x02000000 : end;
     }
 
+    // the game's VBlank task queue (gSystem +0x1C in the user's HeartGold, gSystem at 021D27B4): it
+    // holds 32 tasks; one more is a failed assert (SysTask_Create returns NULL), which with a link up
+    // is the blue "An error has occurred" screen. Its depth is logged at each new high (reset below 4)
+    unsigned QueueMax = 0;
+    unsigned QueueDepth(unsigned offset) const
+    {
+        const unsigned g = 0x021D27B4, q = R32(g + offset);
+        if (!InRam(q) || (R16(q) != 0x20 && R16(q) != 0x40 && offset == 0x1C)) return 0;
+        unsigned head = q + 4, n = R32(head + 8), k = 0;
+        while (n != head && InRam(n) && k < 100) { n = R32(n + 8); k++; }
+        return k;
+    }
+    void WatchQueues()
+    {
+        const unsigned d = QueueDepth(0x1C);
+        if (d < 4) QueueMax = 0;
+        if (d > QueueMax && d >= 8) { Say("VBlank task queue %u of %u (other queue +0x20: %u)", d, R16(R32(0x021D27B4 + 0x1C)), QueueDepth(0x20)); }
+        if (d > QueueMax) QueueMax = d;
+    }
+
     // once a frame
     void Frame(const unsigned char* ram, unsigned ramMask, unsigned frame)
     {
         Ram = ram; RamMask = ramMask; FrameNo = frame;
+        WatchQueues();
         if (CommState && !IsCommState(CommState)) { Say("CommStateWork gone"); CommState = 0; Last[0].clear(); LastFunc = 0; LastLinked = false; }
         if (Wireless && !IsWireless(Wireless)) { Say("CommWirelessWork gone"); Wireless = 0; Last[1].clear(); }
         if (Core && !IsCore(Core)) { Say("gCommCore.work gone"); Core = 0; Last[2].clear(); }

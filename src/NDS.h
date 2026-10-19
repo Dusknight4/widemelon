@@ -392,6 +392,7 @@ public: // TODO: Encapsulate the rest of these members
     virtual bool NeedsDirectBoot() const;
     void SetupDirectBoot(const std::string& romname);
     virtual void SetupDirectBoot();
+    void FixHgVBlankQueue(const NDSHeader& header, const u8* cartrom, u32 romlen);  // WideMelon: see NDS.cpp
 
     [[nodiscard]] GBACart::CartCommon* GetGBACart() { return (ConsoleType == 1) ? nullptr : GBACartSlot.GetCart(); }
     [[nodiscard]] const GBACart::CartCommon* GetGBACart() const {  return (ConsoleType == 1) ? nullptr : GBACartSlot.GetCart(); }
