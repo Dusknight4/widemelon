@@ -22,6 +22,7 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include "NDS.h"
+#include "HgWatch.h"
 #include "ARM.h"
 #include "NDSCart.h"
 #include "GBACart.h"
@@ -1282,22 +1283,27 @@ u32 NDS::RunFrame()
         return 263;
 }
 
+static void GameWatchFrame(NDS& nds);  // WideMelon: see below
+
 u32 NDS::RunFrame()
 {
+    u32 lines;
 #ifdef JIT_ENABLED
     if (EnableJIT)
-        return RunFrame<CPUExecuteMode::JIT>();
+        lines = RunFrame<CPUExecuteMode::JIT>();
     else
 #endif
 #ifdef GDBSTUB_ENABLED
     if (EnableGDBStub)
     {
-        return RunFrame<CPUExecuteMode::InterpreterGDB>();
+        lines = RunFrame<CPUExecuteMode::InterpreterGDB>();
     } else
 #endif
     {
-        return RunFrame<CPUExecuteMode::Interpreter>();
+        lines = RunFrame<CPUExecuteMode::Interpreter>();
     }
+    GameWatchFrame(*this);
+    return lines;
 }
 
 void NDS::Reschedule(u64 target)
@@ -4312,12 +4318,15 @@ void NDS::ARM7IOWrite16(u32 addr, u16 val)
 // WIDEMELON_PXI_RING=<file>: the same, but only the last 30000 words are kept (in memory), and
 // written out (appended) whenever the ARM9 asks for WM Reset or End: what the game's wireless
 // did just before it shut down, however long the session ran
+static char PxiRingLines[30000][200];
+static unsigned PxiRingNext = 0, PxiRingCount = 0;
 static void PxiRing(int from, unsigned frame, unsigned val, const u8* ram, u32 ramMask)
 {
     static const char* path = getenv("WIDEMELON_PXI_RING");
     if (!path) return;
-    static char ring[30000][200];
-    static unsigned next = 0, count = 0;
+    auto& ring = PxiRingLines;
+    auto& next = PxiRingNext;
+    auto& count = PxiRingCount;
     char* line = ring[next];
     int n = snprintf(line, 200, "%u %s tag %2u data %07X raw %08X", frame, from ? "7>9" : "9>7", val & 0x1F, val >> 6, val);
     const u32 addr = val >> 6;
@@ -4364,6 +4373,26 @@ static void PxiTrace(int from, unsigned frame, unsigned val, const u8* ram, u32 
         fprintf(f, "\n");
     }
     if (lines % 64 == 0) fflush(f);
+}
+
+// WideMelon: with WIDEMELON_PXI_RING set, HeartGold's link layer is watched too (HgWatch.h): its
+// changes go into the same ring, among the WM messages, and into "WideMelon game watch.txt"
+static void GameWatchOut(unsigned frame, const char* text)
+{
+    snprintf(PxiRingLines[PxiRingNext], 200, "%u note %s", frame, text);
+    PxiRingNext = (PxiRingNext + 1) % 30000;
+    if (PxiRingCount < 30000) PxiRingCount++;
+    static FILE* f = fopen("WideMelon game watch.txt", "a");
+    if (f) { fprintf(f, "%u %s\n", frame, text); fflush(f); }
+}
+
+static void GameWatchFrame(NDS& nds)
+{
+    static const bool on = getenv("WIDEMELON_PXI_RING") != nullptr;
+    if (!on) return;
+    static HgWatch watch;
+    watch.Out = GameWatchOut;
+    watch.Frame(nds.MainRAM, nds.MainRAMMask, nds.NumFrames);
 }
 
 void NDS::InjectArm7Fifo(u32 val)

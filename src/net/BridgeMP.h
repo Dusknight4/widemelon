@@ -33,16 +33,15 @@ namespace melonDS
 // app takes part (the first that turns its wireless on).
 //
 // Timing, as tested over simulated WiFi: when the local DS hosts, it waits for
-// the remote's reply to each CMD (up to HostWaitMs, and only within the frame's spare
-// time: see HostFitFrame); as a client it never waits for the host's next CMD, so the
+// the remote's reply to each CMD (up to HostWaitMs); as a client it never waits for the host's next CMD, so the
 // emulator never stalls on a slow link.
 //
 // Set up through the environment:
 //   WIDEMELON_BRIDGE              "listen", or the remote's address: "ip" or "ip:port"
 //   WIDEMELON_BRIDGE_PORT         local UDP port (default 7071; also the remote's default)
-//   WIDEMELON_BRIDGE_HOST_WAIT_MS how long the local host waits for a reply (default 16)
-//   WIDEMELON_BRIDGE_HOST_FIT_FRAME "0": wait up to HOST_WAIT_MS even past the frame's
-//                                 spare time (slower than 60 FPS on a slow link)
+//   WIDEMELON_BRIDGE_HOST_WAIT_MS how long the local host waits for a reply (default 25)
+//   WIDEMELON_BRIDGE_HOST_FIT_FRAME "1": wait only within the frame's spare time (an experiment,
+//                                 off: on a real link it lost most replies, ~20 FPS, no talks)
 //   WIDEMELON_BRIDGE_CLIENT_WAIT_MS how long the local client waits for a CMD (default 0)
 //   WIDEMELON_BRIDGE_LOCAL_ACK    "0": with a real DS host, wait for its acks instead of
 //                                 acking our replies ourselves (default on)
@@ -57,12 +56,12 @@ public:
     {
         u16 Port = 7071;
         std::string Peer;           // "ip" or "ip:port"; empty: listen, and answer whoever writes
-        double HostWaitMs = 16;   // (was 25: a slow network then cost frames, ~46 FPS at 16 ms a round)
+        double HostWaitMs = 25;   // (16 with HostFitFrame was tried, exe v11: unusable on a real link)
         // as host: wait only while the emulated clock is ahead of real time (time the frame
         // limiter would sleep anyway), so waiting never costs a frame; at least HostMinWaitMs
         // (an emulator running behind still hears a nearby DS). A reply that comes later is
         // dropped as before, and both ends send its data again (the WM ports' resending)
-        bool HostFitFrame = true;
+        bool HostFitFrame = false;
         double HostMinWaitMs = 4;
         double ClientWaitMs = 0;
         double AckWaitMs = 16;    // as a client: for the host's ack after our reply (once a round)
