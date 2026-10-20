@@ -104,6 +104,25 @@
   or plugin folders next to it (see BUILD.md). It keeps its settings and
   saves in its own folder. Cameras use Qt's Windows Media Foundation backend
   instead of FFmpeg.
+- **Local wireless with a real DS over WiFi (alpha).** Config > Multiplayer >
+  *Connect a real DS (WiFi bridge)*. A DSi, or a 3DS running DS games in DSi
+  mode through TWiLight Menu++, joins your WiFi with the modified
+  nds-bootstrap (github.com/Dusknight4/nds-bootstrap, release v2.17.0-M1) and
+  plays local wireless with WideMelon on the same network: the Union Room,
+  trades and battles. Tested with Pokémon Platinum and HeartGold (US), either
+  console starting the talk. WideMelon listens on UDP port 7071 and finds the
+  DS by itself; allow WideMelon through the firewall on private networks.
+  Setting: `MP.DSBridge`.
+- **Online as Local (alpha).** Config > Multiplayer > *Online as Local...*:
+  local wireless with a friend's WideMelon over the internet, joined by a room
+  name and password.
+- **HeartGold/SoulSilver: no blue screen after cancelling a link trade or
+  battle.** These games keep at most 32 jobs for the next VBlank; returning to
+  the Union Room map they can queue more than that at once, and with a link up
+  that failed check is the blue "An error has occurred" screen (it showed up
+  with the WiFi bridge). WideMelon gives that list room for 64 when the game
+  boots (direct boot only; `WIDEMELON_HG_VBLANK_QUEUE=0` turns it off). Start
+  the game fresh: a savestate made before keeps the old size.
 
 ### Fixed
 
