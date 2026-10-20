@@ -113,6 +113,14 @@
   console starting the talk. WideMelon listens on UDP port 7071 and finds the
   DS by itself; allow WideMelon through the firewall on private networks.
   Setting: `MP.DSBridge`.
+  - WideMelon never waits for the DS, so it stays at full speed even on a
+    slow or busy network; the link data just arrives a frame or two later.
+    The game's wireless runs on the same WM HLE as on the DS (as in Online as
+    Local) instead of the emulated wireless chip, which had to wait for the
+    DS's reply in every round it hosted. Turn the option on before the game
+    uses its wireless (it's remembered, so normally from the start); while it
+    is on, the game's Nintendo WFC (online) features don't work.
+    `WIDEMELON_DS_LINK=0` brings back the emulated-chip bridge.
 - **Online as Local (alpha).** System > Multiplayer > *Online as Local...*:
   local wireless with a friend's WideMelon over the internet, joined by a room
   name and password.

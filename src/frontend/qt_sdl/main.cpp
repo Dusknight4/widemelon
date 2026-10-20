@@ -59,6 +59,7 @@
 #include "CameraManager.h"
 #include "MPInterface.h"
 #include "BridgeMP.h"
+#include "DsLink.h"
 #include "Net.h"
 
 #include "CLI.h"
@@ -398,7 +399,7 @@ int main(int argc, char** argv)
     // default MP interface type is local MP
     // this will be changed if a LAN or netplay session is initiated
     // (WideMelon: local MP with a real DS over WiFi, if the Multiplayer menu says so)
-    BridgeMP::SetUserEnabled(Config::GetGlobalTable().GetBool("MP.DSBridge"));
+    DsLink::SetUserEnabled(Config::GetGlobalTable().GetBool("MP.DSBridge"));
     setMPInterface(MPInterface_Local);
 
     NetInit();

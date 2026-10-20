@@ -11,6 +11,7 @@ add_library(net-utils STATIC
     BridgeMP.cpp
     OnlineRelay.cpp
     OnlineLocal.cpp
+    DsLink.cpp
     wmhle/wmhle.c
     wmhle/wmhle_air.c
     LAN.cpp

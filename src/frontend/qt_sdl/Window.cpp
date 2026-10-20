@@ -79,6 +79,7 @@
 #include "Savestate.h"
 #include "MPInterface.h"
 #include "BridgeMP.h"
+#include "DsLink.h"
 #include "LANDialog.h"
 #include "OnlineLocalDialog.h"
 
@@ -2103,7 +2104,7 @@ void MainWindow::onMPDSBridge(bool checked)
     auto cfg = Config::GetGlobalTable();
     cfg.SetBool("MP.DSBridge", checked);
     Config::Save();
-    BridgeMP::SetUserEnabled(checked);
+    DsLink::SetUserEnabled(checked);
     // at once, unless a LAN game is on (it goes back to local wireless afterwards, with
     // this setting); the game paused while the wireless is swapped under it
     if (MPInterface::GetType() == MPInterface_Local)
