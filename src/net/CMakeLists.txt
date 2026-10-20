@@ -23,6 +23,12 @@ target_include_directories(net-utils PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
+# WideMelon: OnlineLocal and DsLink reach into the core's NDS object (its wireless hooks, main RAM),
+# so they must see it laid out as the core does: the core's own switches (JIT_ENABLED,
+# OGLRENDERER_ENABLED... add members to NDS and GPU). Without them, the hooks were written to the
+# wrong place in the object and never ran.
+target_compile_definitions(net-utils PRIVATE $<TARGET_PROPERTY:core,INTERFACE_COMPILE_DEFINITIONS>)
+
 option(USE_SYSTEM_LIBSLIRP "Use system libslirp instead of the bundled version" OFF)
 if (USE_SYSTEM_LIBSLIRP)
     pkg_check_modules(Slirp REQUIRED IMPORTED_TARGET slirp)
