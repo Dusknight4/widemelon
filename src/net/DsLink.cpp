@@ -422,7 +422,21 @@ void Frame(melonDS::NDS* nds)
         if (g_nds == nds && nds->ScanlineHook == Scanline) { nds->PxiTap = nullptr; nds->ScanlineHook = nullptr; }
         g_nds = nullptr;
     }
-    if (on) Report();
+    if (!on) return;
+    Report();
+    // (diagnostics) a callback the game hasn't taken for a second (CALLBACK_CONTROL bit 0 still set:
+    // every callback after it waits): the game's state now and a second later, into the game watch
+    // files (HG link battles stalled like this at a faint)
+    static unsigned busyFrames = 0, snapshots = 0;
+    busyFrames = (nds->MainRAM[0x027FFF96 & nds->MainRAMMask] & 1) ? busyFrames + 1 : 0;
+    if ((busyFrames == 60 || busyFrames == 120) && snapshots < 6)
+    {
+        snapshots++;
+        char why[100];
+        std::snprintf(why, sizeof why, "DS link: a callback not taken by the game for %u frames", busyFrames);
+        LogLine("", why);
+        nds->DebugSnapshot(why);
+    }
 }
 
 }

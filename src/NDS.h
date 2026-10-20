@@ -451,6 +451,9 @@ public: // TODO: Encapsulate the rest of these members
     void InjectArm7Fifo(u32 val);
     // the FIFO to the ARM9 is full: a word injected now would be lost (the WM HLE then waits)
     bool Arm7FifoFull() const { return IPCFIFO7.IsFull(); }
+    // (diagnostics) the ARM9's state, its IRQ and FIFO registers into "WideMelon game watch.txt", the
+    // whole ARM9 side into "WideMelon game watch dump <frame>.bin", and the PXI ring (WIDEMELON_PXI_RING)
+    void DebugSnapshot(const char* why);
     void ClearIRQ(u32 cpu, u32 irq);
     void SetIRQ2(u32 irq);
     void ClearIRQ2(u32 irq);

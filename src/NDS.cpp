@@ -4530,6 +4530,22 @@ static void GameWatchFrame(NDS& nds)
     }
 }
 
+void NDS::DebugSnapshot(const char* why)
+{
+    char line[200];
+    snprintf(line, sizeof line, "%s: ARM9 PC %08X LR %08X CPSR %08X, IME %X IE %08X IF %08X, IPCFIFOCNT9 %04X, FIFO to ARM9 %u, to ARM7 %u",
+             why, ARM9.R[15], ARM9.R[14], ARM9.CPSR, IME[0], IE[0], IF[0], IPCFIFOCnt9, IPCFIFO7.Level(), IPCFIFO9.Level());
+    GameWatchOut(NumFrames, line);
+    GameWatchDump(*this, why);
+    if (const char* path = getenv("WIDEMELON_PXI_RING"))
+        if (FILE* f = fopen(path, "a"))
+        {
+            fprintf(f, "==== %s at frame %u: the last %u words ====\n", why, (unsigned)NumFrames, PxiRingCount);
+            for (unsigned k = 0; k < PxiRingCount; k++) fprintf(f, "%s\n", PxiRingLines[(PxiRingNext + 30000 - PxiRingCount + k) % 30000]);
+            fclose(f);
+        }
+}
+
 void NDS::InjectArm7Fifo(u32 val)
 {
     // as the ARM7 writing IPCFIFOSEND
