@@ -226,7 +226,17 @@ void HostPoll() { Drain(); }
 bool HostWaitArm9() { return false; }    // (the ARM9 runs between our calls: the rest goes on the next line)
 uint32_t HostNowUs() { return (uint32_t)(NowMs() * 1000.0); }
 void HostLog(const char* t) { LogLine("[WM] ", t); }
-const WmHleHost g_host = { HostRam, HostToArm9, HostSend, HostPoll, HostWaitArm9, HostNowUs, g_mac, HostLog, nullptr };
+// the IPC FIFO to the ARM9 is full: wmhle waits rather than hand a callback over (the core drops a
+// word injected into a full FIFO, and wmhle would then wait for good for the ARM9 to take that
+// callback: at a link battle's faint, every callback after it stalled and the link died)
+bool HostArm9FifoFull()
+{
+    if (!g_nds->Arm7FifoFull()) return false;
+    std::lock_guard l(g_countLock);
+    g_total.FifoFull++; g_window.FifoFull++;
+    return true;
+}
+const WmHleHost g_host = { HostRam, HostToArm9, HostSend, HostPoll, HostWaitArm9, HostNowUs, g_mac, HostLog, HostArm9FifoFull };
 
 bool Tap(melonDS::NDS* nds, uint32_t val)
 {
@@ -271,8 +281,8 @@ void Report()
     }
     if (!w.MsgsIn && !w.MsgsOut) return;
     char line[300];
-    std::snprintf(line, sizeof(line), "DS link: messages out %u, in %u, hellos in %u; link time per frame %.0f us on average, longest %.0f us%s",
-                  w.MsgsOut, w.MsgsIn, w.HellosIn, w.Frames ? w.LinkUsSum / w.Frames : 0.0, w.LinkUsMax,
+    std::snprintf(line, sizeof(line), "DS link: messages out %u, in %u, hellos in %u; link time per frame %.0f us on average, longest %.0f us; FIFO to the game full %u times%s",
+                  w.MsgsOut, w.MsgsIn, w.HellosIn, w.Frames ? w.LinkUsSum / w.Frames : 0.0, w.LinkUsMax, w.FifoFull,
                   now - g_lastHeard > 3000 ? "; the remote is silent" : "");
     LogLine("", line);
 }
@@ -368,6 +378,14 @@ void Stop()
     std::lock_guard l2(g_inLock);
     g_inbox.clear();
     g_inboxFull = false;
+}
+
+namespace
+{
+// when WideMelon closes: the receiver thread stopped first (a std::thread still running when it's
+// destroyed ends the program: closing WideMelon with the link on showed as a crash, 0xc0000409),
+// and the DS told we're gone. (Defined after the others in this file, so destroyed before them)
+struct StopAtExit { ~StopAtExit() { Stop(); } } g_stopAtExit;
 }
 
 bool Enabled() { return g_on; }

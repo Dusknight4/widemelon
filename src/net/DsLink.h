@@ -53,6 +53,7 @@ void SetLogHook(void (*hook)(const char*));
 struct Counts
 {
     uint32_t MsgsOut = 0, MsgsIn = 0, HellosIn = 0;
+    uint32_t FifoFull = 0;      // times a callback waited: the IPC FIFO to the game was full
     double LinkUsMax = 0;       // the longest time the link took in one emulated frame (µs)
     double LinkUsSum = 0;       // in all frames (with Frames: the average)
     uint32_t Frames = 0;

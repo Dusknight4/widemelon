@@ -449,6 +449,8 @@ public: // TODO: Encapsulate the rest of these members
     // and called at the start of each scanline (to run the WM HLE often)
     void (*ScanlineHook)(NDS* nds, u32 line) = nullptr;
     void InjectArm7Fifo(u32 val);
+    // the FIFO to the ARM9 is full: a word injected now would be lost (the WM HLE then waits)
+    bool Arm7FifoFull() const { return IPCFIFO7.IsFull(); }
     void ClearIRQ(u32 cpu, u32 irq);
     void SetIRQ2(u32 irq);
     void ClearIRQ2(u32 irq);

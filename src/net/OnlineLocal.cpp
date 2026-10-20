@@ -264,7 +264,9 @@ void HostLog(const char* t)
     g_logBytes += std::fprintf(g_log, "[%.1f s] %s\n", NowMs() / 1000.0, t);
     std::fflush(g_log);
 }
-const WmHleHost g_host = { HostRam, HostToArm9, HostSend, HostPoll, HostWaitArm9, HostNowUs, g_mac, HostLog, nullptr };
+// (the IPC FIFO to the ARM9 full: wmhle waits rather than hand a callback over; see DsLink.cpp)
+bool HostArm9FifoFull() { return g_nds->Arm7FifoFull(); }
+const WmHleHost g_host = { HostRam, HostToArm9, HostSend, HostPoll, HostWaitArm9, HostNowUs, g_mac, HostLog, HostArm9FifoFull };
 
 bool Tap(melonDS::NDS* nds, uint32_t val)
 {
@@ -366,6 +368,13 @@ void Stop()
     std::lock_guard l2(g_inLock);
     g_inbox.clear();
     g_inboxFull = false;
+}
+
+namespace
+{
+// when WideMelon closes: the receiver thread stopped first (a std::thread still running when it's
+// destroyed ends the program), and the room told we're gone. (Defined after the others here)
+struct StopAtExit { ~StopAtExit() { Stop(); } } g_stopAtExit;
 }
 
 void SetLogHook(void (*hook)(const char*)) { g_logHook = hook; }
