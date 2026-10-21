@@ -4,6 +4,7 @@
 #include "SaveSync.h"
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>

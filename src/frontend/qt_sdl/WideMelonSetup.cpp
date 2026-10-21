@@ -172,7 +172,7 @@ public:
     explicit SetupDialog(QWidget* parent = nullptr)
         : QDialog(parent)
     {
-        setWindowTitle("WideMelon settings");
+        setWindowTitle("MultiMelon settings");
         setModal(true);
         setMinimumWidth(500);
 
@@ -446,8 +446,8 @@ void OpenSettings(QWidget* parent)
         return;
 
     dialog.apply();
-    QMessageBox::information(parent, "WideMelon settings saved",
-        "Your settings will take effect the next time WideMelon starts.");
+    QMessageBox::information(parent, "MultiMelon settings saved",
+        "Your settings will take effect the next time MultiMelon starts.");
 }
 
 }

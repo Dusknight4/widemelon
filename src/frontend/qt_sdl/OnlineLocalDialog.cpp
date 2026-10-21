@@ -51,7 +51,7 @@ OnlineLocalDialog::OnlineLocalDialog(QWidget* parent, EmuThread* emu) : QDialog(
     auto* layout = new QVBoxLayout(this);
 
     auto* intro = new QLabel("Play a game's local wireless (Union Room trades, battles...) with a friend's "
-                             "WideMelon over the internet. You both type the same room name and password: "
+                             "MultiMelon over the internet. You both type the same room name and password: "
                              "one of you hosts, the other joins. Connect before entering the Union Room.");
     intro->setWordWrap(true);
     layout->addWidget(intro);

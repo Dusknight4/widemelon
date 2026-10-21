@@ -48,13 +48,13 @@ def main():
         raise RuntimeError("Missing native dependencies or their source download cache")
     dist = root / "dist"
     dist.mkdir(exist_ok=True)
-    name = f"WideMelon-{args.version}-{args.platform}"
+    name = f"MultiMelon-{args.version}-{args.platform}"
     with tempfile.TemporaryDirectory(prefix="widemelon-package-") as temporary:
         work = Path(temporary)
         stage = work / name
         run("cmake", "--install", str(build), "--prefix", str(stage))
         mac = args.platform.startswith("macos-")
-        app = stage / "Applications/WideMelon.app" if mac else stage
+        app = stage / "Applications/MultiMelon.app" if mac else stage
         docs = app / "Contents/Resources/doc" if mac else app / "doc"
         docs.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / "RELEASE_NOTES.md", docs)
@@ -71,8 +71,8 @@ def main():
         if mac:
             # Keep a plain app bundle for development artifacts and put the
             # end-user application in a directly downloadable disk image.
-            application = dist / "WideMelon.app"
-            release_name = f"WideMelon-{args.version}-{args.platform.replace('macos-', 'macOS-')}.dmg"
+            application = dist / "MultiMelon.app"
+            release_name = f"MultiMelon-{args.version}-{args.platform.replace('macos-', 'macOS-')}.dmg"
             image_path = dist / release_name
             if application.exists():
                 if application.is_dir() and not application.is_symlink():
@@ -84,7 +84,7 @@ def main():
             shutil.copytree(app, application, symlinks=True)
             app = application
 
-            executable = app / "Contents/MacOS/WideMelon"
+            executable = app / "Contents/MacOS/MultiMelon"
             with (app / "Contents/Info.plist").open("rb") as stream:
                 info = plistlib.load(stream)
             if info["CFBundleExecutable"] != executable.name or not executable.is_file():
@@ -115,16 +115,16 @@ def main():
             image_root.mkdir()
             shutil.copytree(app, image_root / app.name, symlinks=True)
             (image_root / "Applications").symlink_to("/Applications")
-            run("hdiutil", "create", "-volname", f"WideMelon {args.version}",
+            run("hdiutil", "create", "-volname", f"MultiMelon {args.version}",
                 "-srcfolder", str(image_root), "-ov", "-format", "UDZO", str(image_path))
             if signing_identity != "-":
                 run("codesign", "--force", "--timestamp", "--sign", signing_identity, str(image_path))
                 run("codesign", "--verify", "--strict", str(image_path))
         else:
-            executable = stage / "widemelon.exe"
+            executable = stage / "multimelon.exe"
             if not executable.is_file():
-                raise RuntimeError("Installed Windows package does not contain widemelon.exe")
-            release_executable = dist / f"WideMelon-{args.version}-Windows-x86_64.exe"
+                raise RuntimeError("Installed Windows package does not contain multimelon.exe")
+            release_executable = dist / f"MultiMelon-{args.version}-Windows-x86_64.exe"
             if release_executable.exists():
                 release_executable.unlink()
             shutil.copy2(executable, release_executable)

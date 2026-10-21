@@ -435,7 +435,7 @@ void PhoneBridgeManager::stop()
 
 void PhoneBridgeManager::disconnectClient()
 {
-    closeClient(QWebSocketProtocol::CloseCodeNormal, "Disconnected by WideMelon");
+    closeClient(QWebSocketProtocol::CloseCodeNormal, "Disconnected by MultiMelon");
 }
 
 void PhoneBridgeManager::closeClient(QWebSocketProtocol::CloseCode code, const QString& reason)
@@ -1086,7 +1086,7 @@ void PhoneBridgeManager::emitTestPattern()
     for (int y = 0; y < 192; y += 16) painter.drawLine(0, y, 255, y);
     painter.setPen(Qt::white);
     painter.drawText(image.rect(), Qt::AlignCenter,
-                     QString("WideMelon phone test\n%1").arg(QDateTime::currentDateTime().toString("hh:mm:ss.zzz")));
+                     QString("MultiMelon phone test\n%1").arg(QDateTime::currentDateTime().toString("hh:mm:ss.zzz")));
     submitFrame(image);
 }
 

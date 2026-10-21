@@ -230,19 +230,19 @@ jobs:
         if: matrix.platform == 'windows-x86_64'
         shell: pwsh
         run: |
-          $path = "dist/WideMelon-${{ needs.version.outputs.version }}-Windows-x86_64.exe"
+          $path = "dist/MultiMelon-${{ needs.version.outputs.version }}-Windows-x86_64.exe"
           $application = Get-Item -LiteralPath $path
-          if ($application.VersionInfo.ProductName -ne "WideMelon") {
+          if ($application.VersionInfo.ProductName -ne "MultiMelon") {
             throw "Unexpected Windows product name: $($application.VersionInfo.ProductName)"
           }
-          if ($application.VersionInfo.FileDescription -notlike "WideMelon*") {
+          if ($application.VersionInfo.FileDescription -notlike "MultiMelon*") {
             throw "Unexpected Windows description: $($application.VersionInfo.FileDescription)"
           }
           & dumpbin /dependents $path
           if ($LASTEXITCODE -ne 0) { throw "dumpbin failed" }
       - name: Verify macOS disk image
         if: startsWith(matrix.platform, 'macos-')
-        run: hdiutil verify "dist/WideMelon-${{ needs.version.outputs.version }}-${{ matrix.release_asset }}"
+        run: hdiutil verify "dist/MultiMelon-${{ needs.version.outputs.version }}-${{ matrix.release_asset }}"
       - name: Notarize and staple macOS disk image
         if: startsWith(matrix.platform, 'macos-')
         env:
@@ -257,7 +257,7 @@ jobs:
             exit 0
           fi
           key_path="$RUNNER_TEMP/AuthKey_${MACOS_NOTARY_KEY_ID}.p8"
-          image="dist/WideMelon-${VERSION}-${PLATFORM/macos-/macOS-}.dmg"
+          image="dist/MultiMelon-${VERSION}-${PLATFORM/macos-/macOS-}.dmg"
           printf '%s' "$MACOS_NOTARY_PRIVATE_KEY" > "$key_path"
           xcrun notarytool submit "$image" \
             --key "$key_path" --key-id "$MACOS_NOTARY_KEY_ID" \
@@ -268,16 +268,16 @@ jobs:
         if: startsWith(matrix.platform, 'macos-')
         uses: actions/upload-artifact@v7
         with:
-          name: WideMelon-${{ needs.version.outputs.version }}-${{ matrix.platform }}-application
-          path: dist/WideMelon.app
+          name: MultiMelon-${{ needs.version.outputs.version }}-${{ matrix.platform }}-application
+          path: dist/MultiMelon.app
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
       - name: Upload release application
         uses: actions/upload-artifact@v7
         with:
-          name: WideMelon-${{ needs.version.outputs.version }}-${{ matrix.platform }}-release
-          path: dist/WideMelon-${{ needs.version.outputs.version }}-${{ matrix.release_asset }}
+          name: MultiMelon-${{ needs.version.outputs.version }}-${{ matrix.platform }}-release
+          path: dist/MultiMelon-${{ needs.version.outputs.version }}-${{ matrix.release_asset }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
@@ -325,7 +325,7 @@ jobs:
         if: inputs.publish_release
         uses: actions/download-artifact@v8
         with:
-          pattern: WideMelon-*-release
+          pattern: MultiMelon-*-release
           path: dist
           merge-multiple: true
       - name: Download native dependency sources
@@ -345,9 +345,9 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           assets=(
-            "WideMelon-$VERSION-Windows-x86_64.exe"
-            "WideMelon-$VERSION-macOS-x86_64.dmg"
-            "WideMelon-$VERSION-macOS-arm64.dmg"
+            "MultiMelon-$VERSION-Windows-x86_64.exe"
+            "MultiMelon-$VERSION-macOS-x86_64.dmg"
+            "MultiMelon-$VERSION-macOS-arm64.dmg"
             "WideMelon-$VERSION-x86_64.AppImage"
             "WideMelon-$VERSION-aarch64.AppImage"
             "widemelon_${VERSION}-1_amd64.deb"
@@ -373,10 +373,10 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a "$tag" "$GITHUB_SHA" -m "WideMelon $VERSION"
+          git tag -a "$tag" "$GITHUB_SHA" -m "MultiMelon $VERSION"
           git push origin "$tag"
           gh release create "$tag" "${paths[@]}" \
-            --verify-tag --title "WideMelon $VERSION" --notes-file RELEASE_NOTES.md --latest
+            --verify-tag --title "MultiMelon $VERSION" --notes-file RELEASE_NOTES.md --latest
       - name: Reuse existing stable release for AUR publication
         if: inputs.publish_aur
         run: echo "Using the existing v${{ needs.version.outputs.version }} release for AUR publication."

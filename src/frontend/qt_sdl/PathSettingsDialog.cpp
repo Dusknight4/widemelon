@@ -68,7 +68,7 @@ PathSettingsDialog::PathSettingsDialog(QWidget* parent) : QDialog(parent), ui(ne
     saveSync = new QCheckBox("Keep saves in two locations in sync");
     saveSync->setToolTip("Location 1 is the save files path above (or the ROM's folder). When a game loads, the newer "
                          "save of the two is used and copied over the older one, and every save is written to both, "
-                         "so you can move between WideMelon and an R4 card's SD card. If location 2 isn't there, saves "
+                         "so you can move between MultiMelon and an R4 card's SD card. If location 2 isn't there, saves "
                          "just go to location 1. Replaced saves are kept in the Backups folder (Bak1 is the newest, up to Bak5).");
     secondSaveFolder = new QLineEdit;
     secondSaveFolder->setPlaceholderText("For example the game folder on your SD card");

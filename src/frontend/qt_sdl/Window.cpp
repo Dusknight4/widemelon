@@ -237,7 +237,7 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
 
     showOSD = windowCfg.GetBool("ShowOSD");
 
-    setWindowTitle("WideMelon");
+    setWindowTitle("MultiMelon");
     setAttribute(Qt::WA_DeleteOnClose);
     setAcceptDrops(true);
     setFocusPolicy(Qt::ClickFocus);
@@ -618,7 +618,7 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
             actInputConfig = menu->addAction("Input and hotkeys");
             connect(actInputConfig, &QAction::triggered, this, &MainWindow::onOpenInputConfig);
 
-            actWideMelonSettings = menu->addAction("WideMelon settings...");
+            actWideMelonSettings = menu->addAction("MultiMelon settings...");
             connect(actWideMelonSettings, &QAction::triggered, this, &MainWindow::onOpenWideMelonSettings);
 
             actPhoneScreenSettings = menu->addAction("Phone screen & controller...");
@@ -2424,7 +2424,7 @@ void MainWindow::onChangeScreenLayout(QAction* act)
     // the world view is widened for the Overlay layout when WideMelon starts
     if (layout == screenLayout_Overlay && panel && panel->height() > 0
         && WideMelon::Width() * panel->height() < 192 * panel->width())
-        osdAddMessage(0, "Restart WideMelon to widen the view to fill the window");
+        osdAddMessage(0, "Restart MultiMelon to widen the view to fill the window");
 }
 
 void MainWindow::onChangeScreenSwap(bool checked)
@@ -2542,7 +2542,7 @@ void MainWindow::onTitleUpdate(QString title)
         title = prefix + title;
     }
 
-    setWindowTitle("WideMelon — " + title);
+    setWindowTitle("MultiMelon — " + title);
 }
 
 void MainWindow::toggleFullscreen()

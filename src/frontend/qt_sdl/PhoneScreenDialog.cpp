@@ -109,8 +109,8 @@ void showFirewallGuide(QWidget* parent, const PhoneFirewallResult& detected,
     const QString firewallHint = detected.guidance.isEmpty() ? QString()
         : "\n\nFirewall check: " + detected.guidance;
     auto explanation = new QLabel(
-        QString("WideMelon's server is listening at %1:%2. If your phone can already open the pairing page, "
-                "no new rule is needed.\n\nUse only your trusted home network. WideMelon will not run "
+        QString("MultiMelon's server is listening at %1:%2. If your phone can already open the pairing page, "
+                "no new rule is needed.\n\nUse only your trusted home network. MultiMelon will not run "
                 "administrator commands; you review and run them in your terminal or system settings.")
             .arg(address).arg(port) + firewallHint);
     explanation->setTextFormat(Qt::PlainText);
@@ -521,7 +521,7 @@ bool PhoneScreenDialog::confirmUnsafeStart()
         "Pairing prevents ordinary devices from connecting, but video and controls are not encrypted. "
         "Only continue on a private home network you trust. The phone and computer must be on the same local "
         "network; guest Wi-Fi and wireless client isolation can prevent the connection.\n\nThe bridge stops when "
-        "WideMelon exits.",
+        "MultiMelon exits.",
         QMessageBox::Cancel | QMessageBox::Ok, QMessageBox::Cancel) == QMessageBox::Ok;
 }
 
@@ -531,7 +531,7 @@ void PhoneScreenDialog::startOrArm()
     {
         QMessageBox::information(this, "No network available",
             "Connect this computer and phone to the same Wi-Fi network, or create a hotspot using your operating system. "
-            "WideMelon will keep showing the small bottom screen.");
+            "MultiMelon will keep showing the small bottom screen.");
         return;
     }
     if (QHostAddress(interfaceBox->currentData().toString()).isLoopback())
@@ -654,7 +654,7 @@ void PhoneScreenDialog::exportDiagnostics()
 {
     if (!manager)
     {
-        QMessageBox::information(this, "Diagnostics unavailable", "Start WideMelon before exporting live diagnostics.");
+        QMessageBox::information(this, "Diagnostics unavailable", "Start MultiMelon before exporting live diagnostics.");
         return;
     }
     const QString path = QFileDialog::getSaveFileName(this, "Export phone bridge diagnostics",

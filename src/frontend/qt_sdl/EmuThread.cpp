@@ -555,7 +555,7 @@ void EmuThread::run()
                     winUpdateFreq = 1;
                     
                 double actualfps = (59.8261 * 263.0) / nlines;
-                snprintf(melontitle, sizeof(melontitle), "[%d/%.0f] WideMelon " WIDEMELON_VERSION, fps, actualfps);
+                snprintf(melontitle, sizeof(melontitle), "[%d/%.0f] MultiMelon " WIDEMELON_VERSION, fps, actualfps);
                 changeWindowTitle(melontitle);
             }
         }
@@ -569,7 +569,7 @@ void EmuThread::run()
 
             emit windowUpdate();
 
-            snprintf(melontitle, sizeof(melontitle), "WideMelon " WIDEMELON_VERSION);
+            snprintf(melontitle, sizeof(melontitle), "MultiMelon " WIDEMELON_VERSION);
             changeWindowTitle(melontitle);
 
             SDL_Delay(75);

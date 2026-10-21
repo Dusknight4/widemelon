@@ -325,7 +325,7 @@ int main(int argc, char** argv)
     std::signal(SIGTERM, signalHandler);
 #endif
 
-    printf("WideMelon " WIDEMELON_VERSION " (melonDS " MELONDS_VERSION ")\n");
+    printf("MultiMelon " WIDEMELON_VERSION " (melonDS " MELONDS_VERSION ")\n");
     printf(MELONDS_URL "\n");
 
     // easter egg - not worth checking other cases for something so dumb
@@ -340,7 +340,7 @@ int main(int argc, char** argv)
     // http://stackoverflow.com/questions/14543333/joystick-wont-work-using-sdl
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
-    SDL_SetHint(SDL_HINT_APP_NAME, "WideMelon");
+    SDL_SetHint(SDL_HINT_APP_NAME, "MultiMelon");
 
     if (SDL_Init(SDL_INIT_HAPTIC) < 0)
     {

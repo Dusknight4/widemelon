@@ -3,7 +3,7 @@
 require "open3"
 require "fileutils"
 
-$app_name = "WideMelon"
+$app_name = "MultiMelon"
 $build_dmg = false
 $build_dir = ""
 $bundle = ""

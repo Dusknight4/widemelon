@@ -85,7 +85,7 @@ VideoSettingsDialog::VideoSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     if (WideMelon::Enabled())
     {
         ui->rb3DSoftware->setEnabled(false);
-        ui->rb3DSoftware->setToolTip("The expanded WideMelon viewport requires an OpenGL renderer.");
+        ui->rb3DSoftware->setToolTip("The expanded MultiMelon viewport requires an OpenGL renderer.");
         ui->rb3DCompute->setToolTip("Reproduces the DS rasterizer on the GPU for more accurate graphics. "
                                     "Requires OpenGL 4.3.");
     }

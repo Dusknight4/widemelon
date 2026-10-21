@@ -172,6 +172,12 @@
 
 ### Changed
 
+- **Renamed to MultiMelon** for its cross-platform wireless multiplayer
+  (the WiFi bridge to a real DS and Online as Local). The window title,
+  About box, menus and the Windows and macOS programs
+  (`multimelon.exe`, `MultiMelon.app`) carry the new name. Settings, saves
+  and the settings folder are unchanged, so nothing has to be moved. Linux
+  packages keep the `widemelon` name for now.
 - Faster emulation: about twice the frame rate of 1.0.4-mod.3 when not
   limited to 60 fps (Pokémon Platinum overworld, JIT on, 4x scale, motion
   smoothing: about 170 fps before, 360 fps now). Results are identical to

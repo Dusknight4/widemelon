@@ -14,14 +14,14 @@ FILETYPE VFT_APP
 	{
 		BLOCK "040904E4"
 		{
-			VALUE "CompanyName", "WideMelon contributors"
+			VALUE "CompanyName", "MultiMelon contributors"
 			VALUE "FileVersion", "${WIDEMELON_VERSION}"
-			VALUE "FileDescription", "WideMelon widescreen Nintendo DS emulator"
-			VALUE "InternalName", "widemelon"
+			VALUE "FileDescription", "MultiMelon Nintendo DS emulator with cross-platform multiplayer"
+			VALUE "InternalName", "multimelon"
 			VALUE "LegalCopyright", "2016-2026 melonDS team; 2026 WideMelon contributors"
 			VALUE "LegalTrademarks", ""
-			VALUE "OriginalFilename", "widemelon.exe"
-			VALUE "ProductName", "WideMelon"
+			VALUE "OriginalFilename", "multimelon.exe"
+			VALUE "ProductName", "MultiMelon"
 			VALUE "ProductVersion", "${WIDEMELON_VERSION}"
 		}
 	}

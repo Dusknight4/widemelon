@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>WideMelon</string>
+    <string>MultiMelon</string>
     <key>CFBundleName</key>
-    <string>WideMelon</string>
+    <string>MultiMelon</string>
     <key>CFBundleIconFile</key>
     <string>widemelon.icns</string>
     <key>CFBundleIdentifier</key>
@@ -33,7 +33,7 @@
     <key>NSCameraUsageDescription</key>
     <string>Camera access is needed for emulation of the DSi's cameras</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>WideMelon uses your private home network to send the bottom screen to your paired phone and receive controls.</string>
+    <string>MultiMelon uses your private home network to send the bottom screen to your paired phone and receive controls.</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

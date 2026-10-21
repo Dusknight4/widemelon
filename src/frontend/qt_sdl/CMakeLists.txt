@@ -119,7 +119,12 @@ fix_interface_includes(PkgConfig::SDL2 PkgConfig::LibArchive)
 add_compile_definitions(ARCHIVE_SUPPORT_ENABLED)
 
 add_executable(melonDS ${SOURCES_QT_SDL})
-set_target_properties(melonDS PROPERTIES OUTPUT_NAME widemelon)
+# The program is called MultiMelon on Windows and macOS; Linux packages keep widemelon for now.
+if (WIN32)
+    set_target_properties(melonDS PROPERTIES OUTPUT_NAME multimelon)
+else()
+    set_target_properties(melonDS PROPERTIES OUTPUT_NAME widemelon)
+endif()
 
 add_subdirectory("../../net"
     ${CMAKE_BINARY_DIR}/net)
@@ -265,7 +270,7 @@ if (APPLE)
     set_target_properties(melonDS PROPERTIES
         MACOSX_BUNDLE true
         MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/res/melon.plist.in
-        OUTPUT_NAME WideMelon
+        OUTPUT_NAME MultiMelon
         RESOURCE "${RESOURCE_FILES}")
 
 
@@ -294,7 +299,7 @@ if (UNIX AND NOT APPLE)
 endif()
 
 if (APPLE)
-    set(WIDEMELON_DOC_DIR Applications/WideMelon.app/Contents/Resources/doc)
+    set(WIDEMELON_DOC_DIR Applications/MultiMelon.app/Contents/Resources/doc)
 elseif (WIN32)
     set(WIDEMELON_DOC_DIR doc)
 else()

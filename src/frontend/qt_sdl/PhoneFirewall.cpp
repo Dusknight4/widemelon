@@ -149,7 +149,7 @@ PhoneFirewallResult InspectPhoneFirewall(const QString& address, quint16 port)
         // Detect installation only: never call firewall-cmd automatically.
         result.detected = true;
         result.name = "firewalld";
-        result.guidance = "firewalld may be preventing the phone from reaching WideMelon's TCP port.";
+        result.guidance = "firewalld may be preventing the phone from reaching MultiMelon's TCP port.";
     }
 #else
     Q_UNUSED(port)
@@ -168,7 +168,7 @@ PhoneFirewallResult InspectPhoneFirewall(const QString& address, quint16 port)
     const ProcessResult apps = run(socketFilterFirewall, {"--listapps"});
     if (!apps.finished || apps.exitCode != 0)
     {
-        result.guidance = "macOS Application Firewall is enabled; WideMelon's incoming-connection rule could not "
+        result.guidance = "macOS Application Firewall is enabled; MultiMelon's incoming-connection rule could not "
             "be checked without administrator access.";
         return result;
     }
@@ -234,26 +234,26 @@ PhoneFirewallResult InspectPhoneFirewall(const QString& address, quint16 port)
     if (found && stateKnown && allowed)
     {
         result.status = PhoneFirewallStatus::Allowed;
-        result.guidance = "macOS Application Firewall is enabled and WideMelon is allowed to accept incoming "
+        result.guidance = "macOS Application Firewall is enabled and MultiMelon is allowed to accept incoming "
             "connections. If the phone still cannot open the page, check that both devices share the selected "
             "private network and that Wi-Fi client isolation is disabled.";
     }
     else if (found && stateKnown)
     {
         result.status = PhoneFirewallStatus::Blocked;
-        result.guidance = "macOS Application Firewall appears to block WideMelon's incoming connections. In "
-            "System Settings > Network > Firewall > Options, add WideMelon and choose Allow incoming connections.";
+        result.guidance = "macOS Application Firewall appears to block MultiMelon's incoming connections. In "
+            "System Settings > Network > Firewall > Options, add MultiMelon and choose Allow incoming connections.";
     }
     else if (found)
     {
-        result.guidance = "macOS Application Firewall is enabled and WideMelon is listed, but its incoming rule "
+        result.guidance = "macOS Application Firewall is enabled and MultiMelon is listed, but its incoming rule "
             "could not be classified. Check System Settings > Network > Firewall > Options and choose Allow "
-            "incoming connections for WideMelon.";
+            "incoming connections for MultiMelon.";
     }
     else
     {
-        result.guidance = "macOS Application Firewall is enabled, but WideMelon is not listed as allowed yet. In "
-            "System Settings > Network > Firewall > Options, add WideMelon and choose Allow incoming connections.";
+        result.guidance = "macOS Application Firewall is enabled, but MultiMelon is not listed as allowed yet. In "
+            "System Settings > Network > Firewall > Options, add MultiMelon and choose Allow incoming connections.";
     }
 #else
     Q_UNUSED(address)
@@ -268,17 +268,17 @@ PhoneFirewallGuide BuildPhoneFirewallGuide(const PhoneFirewallResult& firewall,
 {
     PhoneFirewallGuide guide;
     guide.firewallName = firewall.name.isEmpty() ? QStringLiteral("System firewall") : firewall.name;
-    guide.scope = QString("Incoming TCP port %1 for WideMelon on the selected private home network").arg(port);
-    guide.instructions = "Open your system's firewall settings and allow WideMelon's incoming TCP port on this "
+    guide.scope = QString("Incoming TCP port %1 for MultiMelon on the selected private home network").arg(port);
+    guide.instructions = "Open your system's firewall settings and allow MultiMelon's incoming TCP port on this "
         "private home network. Keep the firewall enabled. If another security product manages the firewall, "
         "use that product's settings. A managed computer may require help from its administrator.";
 #ifdef Q_OS_WIN
     guide.instructions = "In Windows Security, open Firewall & network protection > Allow an app through firewall "
-        "> Change settings > Allow another app. Select the WideMelon executable and allow it on Private networks "
+        "> Change settings > Allow another app. Select the MultiMelon executable and allow it on Private networks "
         "only. Keep Public unchecked. Remove the app's permission there when no longer needed.";
 #elif defined(Q_OS_MACOS) || defined(Q_OS_MAC)
-    guide.instructions = "In System Settings > Network > Firewall > Options, add WideMelon and choose Allow "
-        "incoming connections. Use the bridge only on your trusted home network. Remove WideMelon from the "
+    guide.instructions = "In System Settings > Network > Firewall > Options, add MultiMelon and choose Allow "
+        "incoming connections. Use the bridge only on your trusted home network. Remove MultiMelon from the "
         "list or block its incoming connections there when no longer needed.";
 #endif
     if (network.address.isLoopback())
@@ -339,14 +339,14 @@ PhoneFirewallGuide BuildPhoneFirewallGuide(const PhoneFirewallResult& firewall,
     {
         QString command = "sudo ufw allow in";
         command += " on " + shellQuote(network.interface) + " from " + subnet;
-        command += " to " + address + " port " + portText + " proto tcp comment 'WideMelon phone controller'";
+        command += " to " + address + " port " + portText + " proto tcp comment 'MultiMelon phone controller'";
         guide.commands = command;
         guide.verification = "sudo ufw status";
         guide.removal = "sudo ufw delete " + command.mid(QString("sudo ufw ").size());
         guide.scope = QString("Incoming TCP %1 to %2 from %3 on interface %4")
             .arg(port).arg(address, subnet, network.interface);
         guide.instructions = "The command adds one persistent UFW rule. It does not enable, disable, or reset UFW.";
-        guide.verificationHint = "Check that UFW reports Status: active and lists the WideMelon ALLOW IN rule "
+        guide.verificationHint = "Check that UFW reports Status: active and lists the MultiMelon ALLOW IN rule "
             "for the displayed address, interface, port and source subnet. UFW prints a rule list, not yes.";
     }
     else
