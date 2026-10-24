@@ -12,25 +12,21 @@
 #ifndef WIDEMELON_DSLINK_H
 #define WIDEMELON_DSLINK_H
 
-// "Wifi as Local Multiplayer" (once "Connect a real DS (WiFi bridge)"): local wireless with a real
-// DS running the game under the modified nds-bootstrap, or with another MultiMelon, on the same
-// network. As in "Online as Local", the game's wireless
-// requests don't go to the emulated ARM7 wireless but to wmhle (the WM HLE the DS itself runs),
-// and the two wmhles talk DsBridge messages to each other, here directly over UDP (port 7071).
-// Neither side ever waits for the other: a slow network only makes the link slower (data a
-// frame or two later), never the emulator. (BridgeMP, the emulated wireless talking to the DS,
-// waited for the DS's reply in every round it hosted: frames lost on a slow network.)
+// "Wifi as Local Multiplayer" (once "Connect a real DS (WiFi bridge)"): local wireless with real
+// DSes running the game under the modified nds-bootstrap and other MultiMelons, on the same
+// network: two, or more (the Pokéathlon's four, the Underground's...). As in "Online as Local",
+// the game's wireless requests don't go to the emulated ARM7 wireless but to wmhle (the WM HLE
+// the DS itself runs), and the wmhles talk DsBridge messages to each other, here directly over
+// UDP (port 7071). Neither side ever waits for another: a slow network only makes the link
+// slower (data a frame or two later), never the emulator. (BridgeMP, the emulated wireless
+// talking to the DS, waited for the DS's reply in every round it hosted: frames lost.)
 //
-// Finding each other works as on the DS (the modified nds-bootstrap), so DS and DS, DS and
-// MultiMelon, and MultiMelon and MultiMelon all pair the same way. The link is on the network
-// only while the game has its wireless on (WM Initialize ... End: the Union Room...) and for
-// 20 s after, as the DS's radio; otherwise it rests: no hellos, nothing taken in. On the network
-// it says hello once a second: by broadcast while it has no partner (so a DS or another
-// MultiMelon that's also looking hears it), to the partner once it has one. The first to write
-// is the partner and stays it (others are ignored) until it has been quiet for 15 s on the
-// network; its hello from another address (the same MAC: a DS back with another IP) is still
-// it. With several pairs on one network, who pairs with whom is first come.
-// The DS's log lines ("[DS] ...") and the link's own go to "WideMelon bridge log.txt".
+// As on the air, everyone on the network hears everyone (wmpeers.h, shared with the DS): no
+// pairing, the games pick whom they talk to, as with consoles in range of each other. The link
+// is on the network only while the game has its wireless on (WM Initialize ... End: the Union
+// Room...) and for 20 s after, as the DS's radio; otherwise it rests: no hellos, nothing taken
+// in. On the network it says hello once a second, by broadcast and to each one it knows.
+// The DSes' log lines ("[DS 10.0.0.65] ...") and the link's own go to "WideMelon bridge log.txt".
 //
 // Turn it on before the game uses its wireless (it's remembered, so normally from the start).
 
@@ -45,8 +41,10 @@ struct Settings
 {
     uint16_t Port = 7071;
     bool Loopback = false;      // only this PC can reach it (tests)
-    std::string HelloTo;        // (tests) "ip:port[,ip:port...]": where hellos go while alone, not by broadcast
+    std::string HelloTo;        // (tests) "ip:port[,ip:port...]": where hellos go, not by broadcast
     bool AlwaysAwake = false;   // (tests) on the network as if the game's wireless were always on
+    // (tests) sends in its place (sock, data, len, sockaddr_in*, its size): a network's delay and loss
+    int (*SendHook)(uintptr_t, const uint8_t*, int, const void*, int) = nullptr;
 };
 
 // the Multiplayer menu's option: starts or stops the link. (WIDEMELON_DS_LINK=0: the emulated

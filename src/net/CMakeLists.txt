@@ -14,6 +14,7 @@ add_library(net-utils STATIC
     DsLink.cpp
     wmhle/wmhle.c
     wmhle/wmhle_air.c
+    wmhle/wmpeers.c
     LAN.cpp
     Netplay.cpp
     MPInterface.cpp
