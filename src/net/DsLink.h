@@ -12,8 +12,9 @@
 #ifndef WIDEMELON_DSLINK_H
 #define WIDEMELON_DSLINK_H
 
-// "Connect a real DS (WiFi bridge)": local wireless with a real DS running the game under the
-// modified nds-bootstrap, on the same network. As in "Online as Local", the game's wireless
+// "Wifi as Local Multiplayer" (once "Connect a real DS (WiFi bridge)"): local wireless with a real
+// DS running the game under the modified nds-bootstrap, or with another MultiMelon, on the same
+// network. As in "Online as Local", the game's wireless
 // requests don't go to the emulated ARM7 wireless but to wmhle (the WM HLE the DS itself runs),
 // and the two wmhles talk DsBridge messages to each other, here directly over UDP (port 7071).
 // Neither side ever waits for the other: a slow network only makes the link slower (data a

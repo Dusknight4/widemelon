@@ -43,7 +43,7 @@ void BridgeMP::SetUserEnabled(bool on) { s_userEnabled = on; }
 
 bool BridgeMP::Wanted()
 {
-    // the Multiplayer menu's "Connect a real DS (WiFi bridge)" (listening on the default
+    // the Multiplayer menu's "Wifi as Local Multiplayer" (listening on the default
     // port), or the environment (the test harness, older launchers)
     const char* b = std::getenv("WIDEMELON_BRIDGE");
     return s_userEnabled || (b && b[0]);

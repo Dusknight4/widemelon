@@ -104,8 +104,9 @@
   or plugin folders next to it (see BUILD.md). It keeps its settings and
   saves in its own folder. Cameras use Qt's Windows Media Foundation backend
   instead of FFmpeg.
-- **Local wireless with a real DS over WiFi.** System > Multiplayer >
-  *Connect a real DS (WiFi bridge)*. A DSi, or a 3DS running DS games in DSi
+- **Local wireless over WiFi, with a real DS or another MultiMelon.** System >
+  Multiplayer > *Wifi as Local Multiplayer* (called *Connect a real DS (WiFi
+  bridge)* before). A DSi, or a 3DS running DS games in DSi
   mode through TWiLight Menu++, joins your WiFi with the modified
   nds-bootstrap (github.com/Dusknight4/nds-bootstrap, release v2.17.0-M2) and
   plays local wireless with WideMelon on the same network: the Union Room,
@@ -113,6 +114,14 @@
   console starting the talk. WideMelon listens on UDP port 7071 and finds the
   DS by itself; allow WideMelon through the firewall on private networks.
   Setting: `MP.DSBridge`.
+  - Two MultiMelons on one network with the option on find each other the
+    same way (as two DSes do), so DS and DS, DS and MultiMelon, and
+    MultiMelon and MultiMelon all play the same way. As on the DS, the link
+    uses the network only while the game has its wireless on (the Union
+    Room...) and for 20 s after; it says hello by broadcast while alone and
+    keeps the first partner that answers until that one has been quiet for
+    15 s. With more than two on one network, who pairs with whom is first
+    come.
   - WideMelon never waits for the DS, so it stays at full speed even on a
     slow or busy network; the link data just arrives a frame or two later.
     The game's wireless runs on the same WM HLE as on the DS (as in Online as

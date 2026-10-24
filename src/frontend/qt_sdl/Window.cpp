@@ -432,9 +432,10 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
                 actMPNewInstance = submenu->addAction("Launch new instance");
                 connect(actMPNewInstance, &QAction::triggered, this, &MainWindow::onMPNewInstance);
 
-                // WideMelon: local wireless with a real DS (3DS/DSi running the game under the
-                // modified nds-bootstrap) over WiFi; remembered, listens on UDP port 7071
-                actMPDSBridge = submenu->addAction("Connect a real DS (WiFi bridge)");
+                // WideMelon: local wireless over WiFi with a real DS (3DS/DSi running the game
+                // under the modified nds-bootstrap) or another MultiMelon on the same network;
+                // remembered, UDP port 7071 (DsLink)
+                actMPDSBridge = submenu->addAction("Wifi as Local Multiplayer");
                 actMPDSBridge->setCheckable(true);
                 actMPDSBridge->setChecked(Config::GetGlobalTable().GetBool("MP.DSBridge"));
                 connect(actMPDSBridge, &QAction::triggered, this, &MainWindow::onMPDSBridge);
