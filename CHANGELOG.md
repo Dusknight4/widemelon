@@ -114,14 +114,20 @@
   console starting the talk. WideMelon listens on UDP port 7071 and finds the
   DS by itself; allow WideMelon through the firewall on private networks.
   Setting: `MP.DSBridge`.
-  - Two MultiMelons on one network with the option on find each other the
-    same way (as two DSes do), so DS and DS, DS and MultiMelon, and
-    MultiMelon and MultiMelon all play the same way. As on the DS, the link
-    uses the network only while the game has its wireless on (the Union
-    Room...) and for 20 s after; it says hello by broadcast while alone and
-    keeps the first partner that answers until that one has been quiet for
-    15 s. With more than two on one network, who pairs with whom is first
-    come.
+  - Up to four players (more where the game allows it, such as the
+    Underground's eight), as on the DS: everyone on the network with the
+    option on hears everyone, DSes and MultiMelons alike, and the game itself
+    picks whom it plays with. So DS and DS, DS and MultiMelon, and MultiMelon
+    and MultiMelon all play the same way, and nobody is locked out by having
+    paired with the wrong player. As on the DS, the link uses the network
+    only while the game has its wireless on (the Union Room...) and for 20 s
+    after; it says hello once a second, by broadcast and to each player it
+    knows, and forgets a player it hasn't heard from for 10 s.
+  - A player who drops out for a few seconds (a weak WiFi signal, a busy PC)
+    carries on where they left off, as on the DS: the link holds for as long
+    as the game allows (10 s in the Pokémon games) instead of ending after
+    2 s, and while one player lags, the others' link rounds don't wait for
+    them.
   - WideMelon never waits for the DS, so it stays at full speed even on a
     slow or busy network; the link data just arrives a frame or two later.
     The game's wireless runs on the same WM HLE as on the DS (as in Online as
