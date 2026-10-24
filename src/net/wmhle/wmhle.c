@@ -125,8 +125,12 @@ enum { ST_READY = 0, ST_STOP = 1, ST_IDLE = 2, ST_CLASS1 = 3, ST_SCAN = 5, ST_CO
 #define WMHLE_MAX_CHILD 15
 #endif
 #define MAX_CHILD WMHLE_MAX_CHILD
-// the parents we've heard (their beacons, for scans): as a real DS, every parent in range
-#define MAX_PARENTS 6
+// the parents we've heard (their beacons, for scans): as a real DS, every parent in range (the
+// DS blob builds with 4: three others hosting at once is the most a four-player game has)
+#ifndef WMHLE_MAX_PARENTS
+#define WMHLE_MAX_PARENTS 6
+#endif
+#define MAX_PARENTS WMHLE_MAX_PARENTS
 #define PARENT_HEARD_FRAMES 60      // a scan finds a parent heard this lately
 #define PARENT_KEEP_FRAMES 300      // and forgets one not heard this long
 // (as the parent) a child we've had nothing from this long is gone (out of range, switched
