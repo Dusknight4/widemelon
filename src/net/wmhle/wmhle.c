@@ -63,6 +63,7 @@ enum { ST_READY = 0, ST_STOP = 1, ST_IDLE = 2, ST_CLASS1 = 3, ST_SCAN = 5, ST_CO
 #define S_mp_parentVCount    0x040
 #define S_mp_childVCount     0x042
 #define S_mp_parentInterval  0x044
+#define S_mp_childInterval   0x048
 #define S_mp_minFreq         0x058
 #define S_mp_freq            0x05A
 #define S_mp_maxFreq         0x05C
@@ -91,6 +92,7 @@ enum { ST_READY = 0, ST_STOP = 1, ST_IDLE = 2, ST_CLASS1 = 3, ST_SCAN = 5, ST_CO
 #define S_enableChannel      0x1F4
 #define S_allowedChannel     0x1F6
 #define S_portSeqNo          0x1F8
+#define S_wlVersion          0x020      // (the wireless firmware's version and the chip's ids, as the real ARM7 fills them)
 #define S_SIZE               0x7D0
 
 // WMParentParam offsets (inside S_pparam)
@@ -203,7 +205,18 @@ static struct {
 	u32 inFlightBuf;            // the receive buffer of the callback the ARM9 has now
 	u32 nBufClobbered;          // (log) CMDs let go: their receive buffer still pointed into by unread callbacks
 	u32 nNotForUs;              // (log) messages for another console, dropped
+	// INITIALIZE's answer, held back as long as the real ARM7 takes (it powers the radio up)
+	bool initReplyPending;
+	u16 initReplyApi;
+	u32 initReplyAt;
 } W;
+// The real ARM7 answers INITIALIZE some frames after it's asked (powering the radio up), and
+// games count on that: Platinum's Underground asks it, sets "alone" (which only takes once its
+// comm system exists) and starts its client, which needs the answer; on a DS that fails the
+// first time, and the second time round "alone" takes. Answered at once, the client started
+// first time, "alone" never took, and the game waited for good for a link it didn't have: the
+// player frozen, Roark's welcome never coming, no one ever found.
+#define INIT_REPLY_FRAMES 6
 
 // the parents in range (their latest beacon): a scan reports one each time, in turn, as a
 // real one reports whichever it hears first (with several hosting, the game scans again
@@ -483,9 +496,24 @@ static void commonInit(u32 miscFlags)
 	sset32(S_miscFlags, miscFlags);
 	for (int i = 0; i < 16 * 8; i++) sset16(S_portSeqNo + 2 * i, 1);
 	copyOut(W.status + S_MacAddress, W.h->mac, 6);
-	sset16(S_enableChannel, 0x1FFF);         // channels 1-13
-	sset16(S_allowedChannel, 0x1FFF);
-	sset16(S_linkLevel, 3);
+	// as a DS's ARM7 leaves the block (melonDS's emulated firmware, compared field by field): the
+	// channels local wireless may use (1, 7 and 13), no link yet, the power save the child
+	// wants, the firmware's version and ids, the MP rates in force. (Platinum's Underground stood
+	// with its own player frozen on the block wmhle had left: channels 1-13, link level 3)
+	sset16(S_enableChannel, 0x3FFE);
+	sset16(S_allowedChannel, 0x1041);
+	sset16(S_linkLevel, 0);
+	sset16(S_pwrMgtMode, 1);
+	sset32(S_mp_childInterval, 0x20B);
+	{
+		static const u16 wl[8] = { 0x2E32, 0x3338, 0x302E, 0x0030, 0xC340, 0x0003, 0x006D, 0x5B1A };   // "2.83.00", ids
+		for (int i = 0; i < 8; i++) sset16(S_wlVersion + 2 * i, wl[i]);
+	}
+	sset16(0x1EC, 2);
+	sset16(0x7C0, 1); sset16(0x7C2, 1); sset16(0x7C4, 6);
+	// and its own buffer: where the status block and the callback FIFO are
+	wr32(W.arm7buf + 0, W.status);
+	wr32(W.arm7buf + 8, W.fifo7to9);
 	for (int i = 0; i < 32; i++) wr32(W.arm7buf + 0xD0 + 16 * i, 0x8000);
 	memset(W.sendq, 0, sizeof(W.sendq));
 	for (int p = 0; p < 16; p++) W.nextSeqNo[p] = 1;
@@ -536,6 +564,7 @@ static void reqStartParent(u32 req)
 	if (state() != ST_IDLE) { c = newCallback(API_START_PARENT, ERR_ILLEGAL_STATE, 0x30); return; }
 	rqReset();
 	setState(ST_PARENT);
+	sset16(S_mode, 1);
 	sset16(S_aid, 0);
 	sset16(S_child_bitmap, 0);
 	setSizes(pp16(PP_parentMaxSize), pp16(PP_childMaxSize), true);
@@ -553,6 +582,7 @@ static void endParent(void)
 	sset16(S_beaconIndicateFlag, 0);
 	for (u16 a = 1; a <= MAX_CHILD; a++) if (sget16(S_child_bitmap) & (1 << a)) sendLeaveTo(a);
 	sset16(S_child_bitmap, 0);
+	sset16(S_linkLevel, 0);
 	stopMp();
 	setState(ST_IDLE);
 }
@@ -566,6 +596,8 @@ static void reqStartScan(u32 req)
 	W.scanning = true;
 	W.scanChannel = rd16(req + 2);
 	W.scanBuf = rd32(req + 4);
+	sset16(S_mode, 2);
+	sset32(S_pInfoBuf, W.scanBuf);
 	u16 ms = rd16(req + 8);
 	if (ms < 10) ms = 10;
 	W.scanEnd = W.frames + (ms * 60 + 999) / 1000;
@@ -573,6 +605,9 @@ static void reqStartScan(u32 req)
 	// bssid at 10: a parent to look for (a game finding its parent again), or broadcast for any
 	copyIn(W.scanBssid, req + 10, 6);
 	W.scanBssidAny = (W.scanBssid[0] & 1) || memcmp(W.scanBssid, "\0\0\0\0\0\0", 6) == 0;
+	// (testing: a scan's start, at most one a second)
+	static u32 lastLog;
+	if (g_wmhleVerbose && W.frames - lastLog >= 60) { lastLog = W.frames; logNum("wmhle: scan, channel / ms", W.scanChannel, ms); }
 }
 
 // a parent this scan would hear now: heard lately, on its channel, the one it looks for. Of
@@ -602,6 +637,8 @@ static void scanTick(void)
 	put16(c + 0x10, W.scanChannel);
 	if (!p) {
 		put16(c + 8, SC_PARENT_NOT_FOUND);
+		static u32 lastNone;
+		if (g_wmhleVerbose && W.frames - lastNone >= 60) { lastNone = W.frames; logNum("wmhle: scan found no parent, channel", W.scanChannel, 0); }
 		return;
 	}
 	// the full WMBssDesc goes to the ARM9's scan buffer, the essentials into the callback
@@ -790,7 +827,9 @@ static void runRequest(u32 req)
 			commonInit(arg(req, 4));
 			setState(apiid == API_INITIALIZE ? ST_IDLE : ST_STOP);
 			logNum("wmhle: initialize, status/fifo", W.status, W.fifo7to9);
-			reply(apiid, ERR_SUCCESS);
+			W.initReplyPending = true;          // (answered in INIT_REPLY_FRAMES: see initTick)
+			W.initReplyApi = apiid;
+			W.initReplyAt = W.frames + INIT_REPLY_FRAMES;
 			break;
 		case API_POWER_ON:   setState(ST_IDLE); reply(apiid, ERR_SUCCESS); break;
 		case API_POWER_OFF:  setState(ST_STOP); reply(apiid, ERR_SUCCESS); break;
@@ -855,7 +894,7 @@ static void runRequest(u32 req)
 		case API_START_PARENT:  reqStartParent(req); break;
 		case API_END_PARENT:    endParent(); reply(apiid, ERR_SUCCESS); break;
 		case API_START_SCAN:    reqStartScan(req); break;
-		case API_END_SCAN:      W.scanning = false; setState(ST_IDLE); reply(apiid, ERR_SUCCESS); break;
+		case API_END_SCAN:      W.scanning = false; setState(ST_IDLE); reply(apiid, ERR_SUCCESS); if (g_wmhleVerbose) logf_("wmhle: scan ended"); break;
 		case API_START_CONNECT: reqStartConnect(req); break;
 		case API_DISCONNECT:    reqDisconnect(req); break;
 		case API_START_MP:      reqStartMp(req); break;
@@ -872,7 +911,7 @@ static void runRequest(u32 req)
 			reply(apiid, ERR_SUCCESS);
 			break;
 	}
-	if (W.initialized) sset16(S_apiBusy, 0);
+	if (W.initialized) { sset16(S_apiBusy, 0); sset16(S_BusyApiid, 0); }
 }
 
 // ---- the parent: beacons, children joining, the MP round ----
@@ -943,6 +982,7 @@ static void onJoin(const BridgeMsg* m)
 	W.childReplied[aid] = false;
 	W.childHeardAt[aid] = W.frames;
 	W.childPolls[aid] = 0;
+	sset16(S_linkLevel, 3);     // (the signal icon: full, while linked)
 	for (int p = 0; p < 16; p++) W.lastRecvSeq[aid][p] = 0xFFFF;
 	u8 body[64];
 	const unsigned n = airBuildAssocResp(body, aid);
@@ -1603,6 +1643,7 @@ static void onJoinOk(const BridgeMsg* m)
 	W.connecting = false;
 	W.lastFromParent = W.frames;
 	sset16(S_aid, aid);
+	sset16(S_linkLevel, 3);
 	setState(ST_CHILD);
 	u8 desc[192];
 	copyIn(desc, W.arm7buf + A7_connectPInfo, sizeof(desc));
@@ -1628,6 +1669,7 @@ static void childLost(u16 reasonCode)
 	s_lostPending = false;
 	stopMp();
 	setState(ST_IDLE);
+	sset16(S_linkLevel, 0);
 	u8* c = newCallback(API_START_CONNECT, ERR_SUCCESS, 0x1A);
 	put16(c + 8, reasonCode);
 	put16(c + 0x0A, sget16(S_aid));
@@ -1655,6 +1697,14 @@ void wmhleRequest(uint32_t data)
 	W.reqIn++;
 }
 
+// INITIALIZE's answer, once its time has come
+static void initTick(void)
+{
+	if (!W.initReplyPending || (s32)(W.frames - W.initReplyAt) < 0) return;
+	W.initReplyPending = false;
+	reply(W.initReplyApi, ERR_SUCCESS);
+}
+
 void wmhlePump(void)
 {
 	while (W.reqOut != W.reqIn) {
@@ -1663,6 +1713,7 @@ void wmhlePump(void)
 		runRequest(req);
 		wr16(req, (u16)(rd16(req) | REQUEST_ACCEPTED));    // the ARM9 may reuse it
 	}
+	initTick();
 	scanTick();
 	connectTick();
 	childHeldTick();
