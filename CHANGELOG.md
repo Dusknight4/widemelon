@@ -108,11 +108,11 @@
   Multiplayer > *Wifi as Local Multiplayer* (called *Connect a real DS (WiFi
   bridge)* before). A DSi, or a 3DS running DS games in DSi
   mode through TWiLight Menu++, joins your WiFi with the modified
-  nds-bootstrap (github.com/Dusknight4/nds-bootstrap, release v2.17.0-M2) and
-  plays local wireless with WideMelon on the same network: the Union Room,
+  nds-bootstrap (github.com/Dusknight4/nds-bootstrap, release v2.17.4) and
+  plays local wireless with MultiMelon on the same network: the Union Room,
   trades and battles. Tested with Pokémon Platinum and HeartGold (US), either
-  console starting the talk. WideMelon listens on UDP port 7071 and finds the
-  DS by itself; allow WideMelon through the firewall on private networks.
+  console starting the talk. MultiMelon listens on UDP port 7071 and finds the
+  others by itself; allow it through the firewall on private networks.
   Setting: `MP.DSBridge`.
   - Up to four players (more where the game allows it, such as the
     Underground's eight), as on the DS: everyone on the network with the
