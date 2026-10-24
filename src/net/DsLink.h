@@ -20,9 +20,16 @@
 // frame or two later), never the emulator. (BridgeMP, the emulated wireless talking to the DS,
 // waited for the DS's reply in every round it hosted: frames lost on a slow network.)
 //
-// The DS says hello by broadcast until a WideMelon answers; WideMelon answers whoever writes to
-// it, and says hello back once a second (the DS looks for it again after 15 s of silence). The
-// DS's log lines ("[DS] ...") and the link's own go to "WideMelon bridge log.txt".
+// Finding each other works as on the DS (the modified nds-bootstrap), so DS and DS, DS and
+// MultiMelon, and MultiMelon and MultiMelon all pair the same way. The link is on the network
+// only while the game has its wireless on (WM Initialize ... End: the Union Room...) and for
+// 20 s after, as the DS's radio; otherwise it rests: no hellos, nothing taken in. On the network
+// it says hello once a second: by broadcast while it has no partner (so a DS or another
+// MultiMelon that's also looking hears it), to the partner once it has one. The first to write
+// is the partner and stays it (others are ignored) until it has been quiet for 15 s on the
+// network; its hello from another address (the same MAC: a DS back with another IP) is still
+// it. With several pairs on one network, who pairs with whom is first come.
+// The DS's log lines ("[DS] ...") and the link's own go to "WideMelon bridge log.txt".
 //
 // Turn it on before the game uses its wireless (it's remembered, so normally from the start).
 
@@ -37,10 +44,13 @@ struct Settings
 {
     uint16_t Port = 7071;
     bool Loopback = false;      // only this PC can reach it (tests)
+    std::string HelloTo;        // (tests) "ip:port[,ip:port...]": where hellos go while alone, not by broadcast
+    bool AlwaysAwake = false;   // (tests) on the network as if the game's wireless were always on
 };
 
 // the Multiplayer menu's option: starts or stops the link. (WIDEMELON_DS_LINK=0: the emulated
-// wireless through BridgeMP instead, as before; WIDEMELON_BRIDGE set: BridgeMP, for its tests)
+// wireless through BridgeMP instead, as before; WIDEMELON_BRIDGE set: BridgeMP, for its tests;
+// WIDEMELON_BRIDGE_HELLO_TO and WIDEMELON_BRIDGE_AWAKE=1: Settings' HelloTo and AlwaysAwake)
 void SetUserEnabled(bool on);
 
 bool Start(const Settings& s);

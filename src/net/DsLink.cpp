@@ -14,6 +14,8 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -70,7 +72,24 @@ bool g_portTaken = false;
 sockaddr_in g_peer {};
 std::atomic<bool> g_peerKnown {false};
 std::atomic<bool> g_remoteIsDs {false};
+std::atomic<bool> g_remoteIsPc {false};
 std::atomic<double> g_lastHeard {-1e9};
+// (the emulator thread) the game's wireless on, and for 20 s after: the link is on the network
+// until then (as the DS's radio, which then rests)
+std::atomic<double> g_awakeUntil {-1e9};
+bool g_alwaysAwake = false;
+constexpr double kAwakeAfterMs = 20000;
+constexpr double kPartnerGoneMs = 15000;    // on the network and nothing from the partner: look for another
+
+// (the receiver) the MAC in the partner's hellos: the same partner from another address is still it
+uint8_t g_peerMac[6] {};
+bool g_peerMacKnown = false;
+// in our hellos, after "WMPC": this session's tag (our own broadcast, heard back, is skipped)
+uint8_t g_helloTag[4] {};
+// where hellos go while alone: by broadcast on this port, or (tests) to these
+uint16_t g_port = 7071;
+bool g_loopback = false;
+std::vector<sockaddr_in> g_helloTo;
 
 std::mutex g_inLock;                // what came from the DS, for wmhle
 std::deque<std::vector<uint8_t>> g_inbox;
@@ -122,57 +141,215 @@ void SendTo(const uint8_t* msg, size_t len)
     sendto(g_sock, (const char*)msg, (int)len, 0, (const sockaddr*)&to, sizeof(to));
 }
 
-void SendHello()
+// our hello: "WMPC" (a MultiMelon; a DS says "DSHW"), then this session's tag
+std::vector<uint8_t> HelloBytes()
 {
     DsBridge::Msg m;
     m.Type = DsBridge::MsgType::Hello;
     std::memcpy(m.Mac, g_mac, 6);
-    const std::vector<uint8_t> w = m.Serialize();
+    m.Body = {'W', 'M', 'P', 'C'};
+    m.Body.insert(m.Body.end(), g_helloTag, g_helloTag + 4);
+    return m.Serialize();
+}
+
+void SendHello()
+{
+    const std::vector<uint8_t> w = HelloBytes();
     SendTo(w.data(), w.size());
+}
+
+bool OwnHello(const DsBridge::Msg& m)
+{
+    return m.Body.size() >= 8 && std::memcmp(m.Body.data(), "WMPC", 4) == 0 && std::memcmp(m.Body.data() + 4, g_helloTag, 4) == 0;
+}
+
+std::string IpText(const sockaddr_in& a)
+{
+    char ip[64] = "?", t[80];
+    inet_ntop(AF_INET, &a.sin_addr, ip, sizeof(ip));
+    std::snprintf(t, sizeof(t), "%s:%d", ip, ntohs(a.sin_port));
+    return t;
+}
+
+// (tests) "ip:port[,ip:port...]"
+std::vector<sockaddr_in> ParseTargets(const std::string& list)
+{
+    std::vector<sockaddr_in> out;
+    size_t at = 0;
+    while (at < list.size())
+    {
+        size_t end = list.find(',', at);
+        if (end == std::string::npos) end = list.size();
+        const std::string one = list.substr(at, end - at);
+        const size_t colon = one.rfind(':');
+        sockaddr_in t {};
+        t.sin_family = AF_INET;
+        t.sin_port = htons(colon == std::string::npos ? 7071 : (uint16_t)std::atoi(one.c_str() + colon + 1));
+        if (inet_pton(AF_INET, one.substr(0, colon).c_str(), &t.sin_addr) == 1) out.push_back(t);
+        at = end + 1;
+    }
+    return out;
+}
+
+// while alone, our hello by broadcast, as the DS's: to every network this PC is on (the general
+// broadcast, which Windows may send on one network only, and each network's own)
+void BroadcastHello()
+{
+    std::vector<sockaddr_in> to = g_helloTo;
+    auto add = [&](uint32_t a)      // (network order)
+    {
+        for (const sockaddr_in& t : to) if (t.sin_addr.s_addr == a) return;
+        sockaddr_in t {};
+        t.sin_family = AF_INET;
+        t.sin_port = htons(g_port);
+        t.sin_addr.s_addr = a;
+        to.push_back(t);
+    };
+    if (g_helloTo.empty() && !g_loopback)
+    {
+        add(htonl(INADDR_BROADCAST));
+#ifdef _WIN32
+        INTERFACE_INFO list[32];
+        DWORD bytes = 0;
+        if (WSAIoctl((SOCKET)g_sock, SIO_GET_INTERFACE_LIST, nullptr, 0, list, sizeof(list), &bytes, nullptr, nullptr) == 0)
+            for (DWORD i = 0; i < bytes / sizeof(INTERFACE_INFO); i++)
+            {
+                const u_long f = list[i].iiFlags;
+                if (!(f & IFF_UP) || (f & IFF_LOOPBACK) || !(f & IFF_BROADCAST)) continue;
+                add(list[i].iiAddress.AddressIn.sin_addr.s_addr | ~list[i].iiNetmask.AddressIn.sin_addr.s_addr);
+            }
+#else
+        ifaddrs* ifs = nullptr;
+        if (getifaddrs(&ifs) == 0)
+        {
+            for (const ifaddrs* i = ifs; i; i = i->ifa_next)
+            {
+                if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || !i->ifa_netmask) continue;
+                if (!(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK) || !(i->ifa_flags & IFF_BROADCAST)) continue;
+                add(((const sockaddr_in*)i->ifa_addr)->sin_addr.s_addr | ~((const sockaddr_in*)i->ifa_netmask)->sin_addr.s_addr);
+            }
+            freeifaddrs(ifs);
+        }
+#endif
+    }
+    const std::vector<uint8_t> w = HelloBytes();
+    for (const sockaddr_in& t : to)
+        sendto(g_sock, (const char*)w.data(), (int)w.size(), 0, (const sockaddr*)&t, sizeof(t));
 }
 
 void RxLoop()
 {
     std::vector<uint8_t> buf(4096);
     double lastHello = -1e9;
+    bool awakeWas = false;
+    std::vector<std::string> ignoring;      // others that wrote while we have a partner (logged once each)
     while (!g_stop)
     {
-        // once a second to the DS, so it knows where we are (and that we're still here)
         const double now = NowMs();
-        if (g_peerKnown && now - lastHello >= 1000) { lastHello = now; SendHello(); }
+        const bool awake = g_alwaysAwake || now < g_awakeUntil;
+        if (awake != awakeWas)
+        {
+            awakeWas = awake;
+            if (awake)
+            {
+                // (the partner's 15 s of silence count only while we're on the network, as on the DS)
+                g_lastHeard = now;
+                lastHello = -1e9;
+                LogLine("", g_peerKnown ? "the game's wireless is on: on the network again (hello to the same partner)"
+                                        : "the game's wireless is on: looking for a DS or another MultiMelon (hello by broadcast)");
+            }
+            else LogLine("", "the game's wireless off for 20 s: resting (no hellos, nothing taken in)");
+        }
+        if (awake)
+        {
+            // a partner quiet this long has gone (closed, or its wireless off): look for another
+            if (g_peerKnown && now - g_lastHeard > kPartnerGoneMs)
+            {
+                g_peerKnown = false;
+                g_remoteIsDs = g_remoteIsPc = false;
+                g_peerMacKnown = false;
+                ignoring.clear();
+                LogLine("", "no word from the partner for 15 s: looking for a DS or another MultiMelon again");
+                lastHello = -1e9;
+            }
+            // once a second: to the partner, so it knows where we are (and that we're still here);
+            // while alone, by broadcast
+            if (now - lastHello >= 1000)
+            {
+                lastHello = now;
+                if (g_peerKnown) SendHello();
+                else BroadcastHello();
+            }
+        }
 
         sockaddr_in from {};
         socklen_t fromLen = sizeof(from);
         const int n = (int)recvfrom(g_sock, (char*)buf.data(), (int)buf.size(), 0, (sockaddr*)&from, &fromLen);
         DsBridge::Msg m;
         if (n <= 0 || !m.Parse(buf.data(), (size_t)n)) continue;
+        if (!awake)
+        {
+            // resting: as a DS with its radio off, nothing comes in (but the partner's log lines,
+            // for the bridge log)
+            std::lock_guard l(g_peerLock);
+            if (m.Type != DsBridge::MsgType::Log || !g_peerKnown
+                || g_peer.sin_addr.s_addr != from.sin_addr.s_addr || g_peer.sin_port != from.sin_port) continue;
+        }
+        const bool hello = m.Type == DsBridge::MsgType::Hello;
+        if (hello && OwnHello(m)) continue;
 
-        // answer whoever writes to us: a DS back with another address is found by its next hello
-        bool moved;
+        // the first to write is the partner; while it is, others are ignored. Its hello from
+        // another address is still it (a DS back with another IP)
+        bool fresh = false, moved = false, other = false;
+        sockaddr_in partner;
         {
             std::lock_guard l(g_peerLock);
-            moved = !g_peerKnown || g_peer.sin_addr.s_addr != from.sin_addr.s_addr || g_peer.sin_port != from.sin_port;
-            g_peer = from;
-            g_peerKnown = true;
+            const bool same = g_peerKnown && g_peer.sin_addr.s_addr == from.sin_addr.s_addr && g_peer.sin_port == from.sin_port;
+            if (!same)
+            {
+                if (!g_peerKnown) fresh = true;
+                else if (hello && g_peerMacKnown && std::memcmp(m.Mac, g_peerMac, 6) == 0) moved = true;
+                else other = true;
+                if (!other) { g_peer = from; g_peerKnown = true; }
+            }
+            partner = g_peer;
+        }
+        if (other)
+        {
+            const std::string who = IpText(from);
+            if (std::find(ignoring.begin(), ignoring.end(), who) == ignoring.end())
+            {
+                ignoring.push_back(who);
+                LogLine("", (who + " says hello too: ignored (the partner is " + IpText(partner) + ")").c_str());
+            }
+            continue;
         }
         g_lastHeard = NowMs();
-        if (moved)
+        if (fresh || moved)
         {
-            char ip[64] = "?", line[120];
-            inet_ntop(AF_INET, &from.sin_addr, ip, sizeof(ip));
-            std::snprintf(line, sizeof(line), "remote is %s:%d", ip, ntohs(from.sin_port));
-            LogLine("", line);
-            Log(LogLevel::Info, "WideMelon DS link: %s\n", line);
-            lastHello = -1e9;   // (our hello at once: the DS learns where we are)
+            if (fresh) { g_remoteIsDs = g_remoteIsPc = false; g_peerMacKnown = false; ignoring.clear(); }
+            const std::string line = "remote is " + IpText(from) + (moved ? " (the partner, at another address)" : "");
+            LogLine("", line.c_str());
+            Log(LogLevel::Info, "WideMelon DS link: %s\n", line.c_str());
+            lastHello = -1e9;   // (our hello at once: the partner learns where we are)
         }
-        if (m.Type == DsBridge::MsgType::Hello)
+        if (hello)
         {
-            std::lock_guard l(g_countLock);
-            g_total.HellosIn++; g_window.HellosIn++;
+            std::memcpy(g_peerMac, m.Mac, 6);
+            g_peerMacKnown = true;
+            {
+                std::lock_guard l(g_countLock);
+                g_total.HellosIn++; g_window.HellosIn++;
+            }
             if (!g_remoteIsDs && m.Body.size() >= 4 && std::memcmp(m.Body.data(), "DSHW", 4) == 0)
             {
                 g_remoteIsDs = true;
                 LogLine("", "the remote is a real DS");
+            }
+            if (!g_remoteIsPc && m.Body.size() >= 4 && std::memcmp(m.Body.data(), "WMPC", 4) == 0)
+            {
+                g_remoteIsPc = true;
+                LogLine("", "the remote is another MultiMelon");
             }
             continue;
         }
@@ -205,8 +382,9 @@ uint8_t* HostRam(uint32_t a) { return g_nds->MainRAM + (a & g_nds->MainRAMMask);
 void HostToArm9(uint32_t w) { g_nds->InjectArm7Fifo(w); }
 void HostSend(const uint8_t* msg, unsigned len)
 {
-    // (until a DS has written to us there's nobody to send to: beacons and scans find no one)
-    if (!g_peerKnown) return;
+    // (until a partner has written to us there's nobody to send to: beacons and scans find no one;
+    // resting, as a DS with its radio off, nothing goes out)
+    if (!g_peerKnown || !(g_alwaysAwake || NowMs() < g_awakeUntil)) return;
     SendTo(msg, len);
     std::lock_guard l(g_countLock);
     g_total.MsgsOut++; g_window.MsgsOut++;
@@ -300,6 +478,8 @@ void SetUserEnabled(bool on)
     Settings s;
     if (const char* p = std::getenv("WIDEMELON_BRIDGE_PORT")) s.Port = (uint16_t)std::atoi(p);
     s.Loopback = std::getenv("WIDEMELON_BRIDGE_LOOPBACK") != nullptr;
+    if (const char* h = std::getenv("WIDEMELON_BRIDGE_HELLO_TO")) s.HelloTo = h;
+    s.AlwaysAwake = std::getenv("WIDEMELON_BRIDGE_AWAKE") != nullptr;
     Start(s);
 }
 
@@ -334,10 +514,18 @@ bool Start(const Settings& s)
     timeval tv {0, 100000};
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
+    const int one = 1;      // (our hellos by broadcast while alone)
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char*)&one, sizeof(one));
     g_sock = (Socket)sock;
     g_portTaken = false;
     g_peerKnown = false;
-    g_remoteIsDs = false;
+    g_remoteIsDs = g_remoteIsPc = false;
+    g_peerMacKnown = false;
+    g_awakeUntil = -1e9;    // (resting until the game turns its wireless on)
+    g_alwaysAwake = s.AlwaysAwake;
+    g_port = s.Port;
+    g_loopback = s.Loopback;
+    g_helloTo = ParseTargets(s.HelloTo);
     {
         std::lock_guard c(g_countLock);
         g_total = g_window = Counts();
@@ -346,11 +534,12 @@ bool Start(const Settings& s)
     std::random_device rd;
     const uint8_t mac[6] = {0x00, 0x09, 0xBF, (uint8_t)rd(), (uint8_t)rd(), (uint8_t)rd()};
     std::memcpy(g_mac, mac, 6);
+    for (uint8_t& b : g_helloTag) b = (uint8_t)rd();
     g_stop = false;
     g_on = true;
     g_rx = std::thread(RxLoop);
-    char line[120];
-    std::snprintf(line, sizeof(line), "DS link (wmhle): UDP port %u%s, waiting for a DS to say hello", s.Port, s.Loopback ? " (this PC only)" : "");
+    char line[200];
+    std::snprintf(line, sizeof(line), "DS link (wmhle): UDP port %u%s; with the game's wireless on it looks for a DS or another MultiMelon on this network", s.Port, s.Loopback ? " (this PC only)" : "");
     LogLine("", line);
     Log(LogLevel::Info, "WideMelon %s\n", line);
     return true;
@@ -394,9 +583,12 @@ std::string StatusText()
 {
     if (g_portTaken) return "Its UDP port is taken (another WideMelon?)";
     if (!g_on) return "Off";
-    if (!g_peerKnown) return "Waiting for a DS on this network to say hello";
-    if (NowMs() - g_lastHeard > 3000) return "The DS has gone quiet";
-    return g_remoteIsDs ? "Connected to a real DS" : "Connected";
+    const double now = NowMs();
+    if (!g_alwaysAwake && now >= g_awakeUntil)
+        return g_peerKnown ? "Resting (the game's wireless is off)" : "Waiting for the game to use its wireless (the Union Room...)";
+    if (!g_peerKnown) return "Looking for a DS or another MultiMelon on this network";
+    if (now - g_lastHeard > 3000) return "The other side has gone quiet";
+    return g_remoteIsDs ? "Connected to a real DS" : g_remoteIsPc ? "Connected to another MultiMelon" : "Connected";
 }
 
 void SetLogHook(void (*hook)(const char*)) { std::lock_guard l(g_logLock); g_logHook = hook; }
@@ -423,6 +615,8 @@ void Frame(melonDS::NDS* nds)
         g_nds = nullptr;
     }
     if (!on) return;
+    // on the network while the game has its wireless on, and for 20 s after (as the DS's radio)
+    if (wmhleActive()) g_awakeUntil = NowMs() + kAwakeAfterMs;
     Report();
     // (diagnostics) a callback the game hasn't taken for a second (CALLBACK_CONTROL bit 0 still set:
     // every callback after it waits): the game's state now and a second later, into the game watch
