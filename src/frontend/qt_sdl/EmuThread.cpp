@@ -1054,6 +1054,7 @@ void EmuThread::updateBattleState()
                             : part == WideMelon::BattleDetector::Boxes ? ScreenLayout::Overlay_Boxes
                             : part == WideMelon::BattleDetector::Bag ? ScreenLayout::Overlay_Cover
                             : part == WideMelon::BattleDetector::Party ? ScreenLayout::Overlay_Cover
+                            : part == WideMelon::BattleDetector::Summary ? ScreenLayout::Overlay_Boxes
                             : part == WideMelon::BattleDetector::Menu ? ScreenLayout::Overlay_Menu
                             : part == WideMelon::BattleDetector::PC ? ScreenLayout::Overlay_Menu
                             : ScreenLayout::Overlay_Normal;

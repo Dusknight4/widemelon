@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstring>
+#include <iterator>
 #include <vector>
 
 #include "types.h"
@@ -27,22 +28,23 @@ namespace WideMelon
 // draws a bar over the top screen's bottom fifth, on the main engine's BG3
 // (start_menu.c: Task_StartMenu_DrawCursor). The PC: the script running is
 // std_pokecenter_pc (2010), its ScriptEnvironment being the environment of the field
-// system's task (or of a task it called). The party screen (Pokémon) is in the ARM9
-// binary, not an overlay: it is running while the field system's process manager has
-// no parent app (the field's is gone) and its child app is gOverlayTemplate_PartyMenu's
-// (FieldProcessManager: parent +0, child +4; an OverlayManager starts with its template,
-// the init function first).
+// system's task (or of a task it called). The party screen (Pokémon) and a Pokémon's
+// summary are in the ARM9 binary, not overlays: one is running while the field system's
+// process manager has no parent app (the field's is gone) and its child app is
+// gOverlayTemplate_PartyMenu's or gOverlayTemplate_PokemonSummary's (FieldProcessManager:
+// parent +0, child +4; an OverlayManager starts with its template, the init function
+// first). (A summary opened from the PC's boxes runs with their overlay still loaded.)
 class BattleDetector
 {
 public:
-    enum Mode { Normal = 0, Battle, Boxes, Bag, Menu, PC, Party };
+    enum Mode { Normal = 0, Battle, Boxes, Bag, Menu, PC, Party, Summary };
 
     // Finds the overlays of a supported game; otherwise Detect() stays Normal.
     void Init(const melonDS::u8* rom, melonDS::u32 romSize)
     {
         Count = 0;
         FieldSysPtr = 0;
-        PartyInit = 0;
+        PartyInit = SummaryInit = 0;
         if (!rom || romSize < 0x200) return;
         Rom = rom;
         RomSize = romSize;
@@ -75,14 +77,15 @@ public:
         if (FieldSysPtr)
         {
             const melonDS::u32 fs = Read32(mainRAM, ramMask, FieldSysPtr);
-            if (PartyInit && (fs >> 24) == 0x02)
+            if ((PartyInit || SummaryInit) && (fs >> 24) == 0x02)
             {
                 const melonDS::u32 pm = Read32(mainRAM, ramMask, fs);
                 if ((pm >> 24) == 0x02 && Read32(mainRAM, ramMask, pm) == 0)
                 {
                     const melonDS::u32 child = Read32(mainRAM, ramMask, pm + 4);
-                    if ((child >> 24) == 0x02 && Read32(mainRAM, ramMask, child) == PartyInit)
-                        return Party;
+                    const melonDS::u32 init = (child >> 24) == 0x02 ? Read32(mainRAM, ramMask, child) : 0;
+                    if (init && init == PartyInit) return Party;
+                    if (init && init == SummaryInit) return Summary;
                 }
             }
             if ((fs >> 24) == 0x02 && (mainRAM[(fs + 0xD2) & ramMask] & 0x3F) != 0)
@@ -229,20 +232,29 @@ private:
         if (lit + 4 > arm9.size()) return;
         const melonDS::u32 ptr = arm9[lit] | arm9[lit + 1] << 8 | arm9[lit + 2] << 16 | (melonDS::u32)arm9[lit + 3] << 24;
         if ((ptr >> 24) == 0x02) FieldSysPtr = ptr;
-        FindPartyMenu(arm9, ram);
+        // gOverlayTemplate_PartyMenu. init: push {r4, r5, lr}; sub sp, #0xC; adds r5, r0, #0; movs r0, #0;
+        // adds r1, r0, #0; four calls; movs r0, #1; lsls r0, r0, #26; ldr r2, [r0]. main: push {r3-r5, lr};
+        // adds r4, r1, #0; a call; ldr r1, [r4]; adds r5, r0, #0; cmp r1, #0x21 (its 34 states)
+        static const short partyInit[] = {0x30, 0xB5, 0x83, 0xB0, 0x05, 0x1C, 0x00, 0x20, 0x01, 0x1C,
+                                          -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+                                          0x01, 0x20, 0x80, 0x06, 0x02, 0x68};
+        static const short partyMain[] = {0x38, 0xB5, 0x0C, 0x1C, -1, -1, -1, -1, 0x21, 0x68, 0x05, 0x1C, 0x21, 0x29};
+        PartyInit = FindApp(arm9, ram, partyInit, std::size(partyInit), partyMain, std::size(partyMain));
+        // gOverlayTemplate_PokemonSummary. init: push {r3-r7, lr}; adds r6, r0, #0; movs r0, #0; adds r1, r0, #0;
+        // four calls; movs r1, #1; lsls r1, r1, #26; ldr r0, [r1]. main: as the party's, with cmp r1, #0x16; bls
+        static const short summaryInit[] = {0xF8, 0xB5, 0x06, 0x1C, 0x00, 0x20, 0x01, 0x1C,
+                                            -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+                                            0x01, 0x21, 0x89, 0x06, 0x08, 0x68};
+        static const short summaryMain[] = {0x38, 0xB5, 0x0C, 0x1C, -1, -1, -1, -1, 0x21, 0x68, 0x05, 0x1C, 0x16, 0x29, 0x00, 0xD9};
+        SummaryInit = FindApp(arm9, ram, summaryInit, std::size(summaryInit), summaryMain, std::size(summaryMain));
     }
 
-    // gOverlayTemplate_PartyMenu: {PartyMenuApp_Init, _Main, _Exit, FS_OVERLAY_ID_NONE}, the only template
-    // whose init and main start as the party menu's do (their calls masked out: they depend on the build)
-    void FindPartyMenu(const std::vector<melonDS::u8>& arm9, melonDS::u32 ram)
+    // an app's init function (with its Thumb bit): the one template {init, main, exit, FS_OVERLAY_ID_NONE}
+    // whose init and main start as given (-1: any byte, for the calls, which depend on the build); 0 if
+    // none or more than one
+    static melonDS::u32 FindApp(const std::vector<melonDS::u8>& arm9, melonDS::u32 ram,
+                                const short* initPat, size_t initLen, const short* mainPat, size_t mainLen)
     {
-        // init: push {r4, r5, lr}; sub sp, #0xC; adds r5, r0, #0; movs r0, #0; adds r1, r0, #0; four calls;
-        // movs r0, #1; lsls r0, r0, #26; ldr r2, [r0]
-        static const short initPat[] = {0x30, 0xB5, 0x83, 0xB0, 0x05, 0x1C, 0x00, 0x20, 0x01, 0x1C,
-                                        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-                                        0x01, 0x20, 0x80, 0x06, 0x02, 0x68};
-        // main: push {r3-r5, lr}; adds r4, r1, #0; a call; ldr r1, [r4]; adds r5, r0, #0; cmp r1, #0x21
-        static const short mainPat[] = {0x38, 0xB5, 0x0C, 0x1C, -1, -1, -1, -1, 0x21, 0x68, 0x05, 0x1C, 0x21, 0x29};
         auto rd = [&](melonDS::u32 o) { return arm9[o] | arm9[o + 1] << 8 | arm9[o + 2] << 16 | (melonDS::u32)arm9[o + 3] << 24; };
         auto codeAt = [&](melonDS::u32 fn, const short* pat, size_t n) {
             if (!(fn & 1) || fn - 1 < ram || fn - 1 + n > ram + arm9.size()) return false;
@@ -256,13 +268,13 @@ private:
         {
             if (rd(o + 12) != 0xFFFFFFFF) continue;
             const melonDS::u32 init = rd(o), main = rd(o + 4);
-            if (codeAt(init, initPat, sizeof(initPat) / sizeof(initPat[0])) && codeAt(main, mainPat, sizeof(mainPat) / sizeof(mainPat[0])))
+            if (codeAt(init, initPat, initLen) && codeAt(main, mainPat, mainLen))
             {
                 found = init;
                 matches++;
             }
         }
-        if (matches == 1) PartyInit = found;
+        return matches == 1 ? found : 0;
     }
 
     static constexpr int MaxParts = 4;
@@ -270,6 +282,7 @@ private:
     int Count = 0;
     melonDS::u32 FieldSysPtr = 0;
     melonDS::u32 PartyInit = 0;     // PartyMenuApp_Init (with its Thumb bit)
+    melonDS::u32 SummaryInit = 0;   // the summary's init
     const melonDS::u8* Rom = nullptr;
     melonDS::u32 RomSize = 0;
 };
