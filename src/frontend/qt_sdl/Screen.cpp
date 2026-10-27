@@ -204,11 +204,12 @@ void ScreenPanel::setupScreenLayout()
 
     numScreens = layout.GetScreenTransforms(screenMatrix[0], screenKind);
 
-    // WideMelon: the same layout as it looks in a Pokémon battle
-    hasBattleLayout = false;
-    if (screenLayout == screenLayout_Overlay)
+    // WideMelon: the same layout as it looks in a Pokémon battle, the PC's boxes, the bag
+    for (int m = 1; m < ScreenLayout::Overlay_Modes; m++)
     {
-        battleLayout.Setup(w, h,
+        hasMode[m] = false;
+        if (screenLayout != screenLayout_Overlay) continue;
+        modeLayout[m].Setup(w, h,
                     static_cast<ScreenLayoutType>(screenLayout),
                     static_cast<ScreenRotation>(screenRotation),
                     static_cast<ScreenSizing>(sizing),
@@ -217,34 +218,54 @@ void ScreenPanel::setupScreenLayout()
                     screenSwap != 0,
                     aspectTop,
                     aspectBot,
-                    true);
-        int battleKind[kMaxScreenTransforms];
-        const int n = battleLayout.GetScreenTransforms(battleMatrix[0], battleKind);
-        hasBattleLayout = (n == numScreens) && std::equal(battleKind, battleKind + n, screenKind);
+                    m);
+        int kind[kMaxScreenTransforms];
+        const int n = modeLayout[m].GetScreenTransforms(modeMatrix[m][0], kind);
+        hasMode[m] = (n == numScreens) && std::equal(kind, kind + n, screenKind);
     }
+    // (a new size or layout: the screens go straight to it, without sliding from the old one)
+    if (!hasMode[blendMode]) blendMode = 0;
+    blend = 1.f;
 
     calcSplashLayout();
 }
 
 void ScreenPanel::blendedScreenMatrices(float out[kMaxScreenTransforms][6])
 {
-    // WideMelon: slide to the battle layout and back in about a third of a second
+    // WideMelon: slide to a mode's layout (a battle, the PC's boxes...) and back in about a
+    // third of a second; a new mode starts from wherever the screens are
     constexpr double kBlendSeconds = 0.35;
     const auto now = std::chrono::steady_clock::now();
     const double dt = std::clamp(std::chrono::duration<double>(now - battleBlendTime).count(), 0.0, 0.1);
     battleBlendTime = now;
 
-    const bool target = hasBattleLayout && emuInstance->battleLayoutActive;
     const float step = static_cast<float>(dt / kBlendSeconds);
-    battleBlend = target ? std::min(1.f, battleBlend + step) : std::max(0.f, battleBlend - step);
-    battleTouch = battleBlend > 0.5f;
+    auto ease = [](float x) { return x * x * (3.f - 2.f * x); };
+    // where the screens are now: from blendFrom, `blend` of the way to blendMode's layout
+    auto current = [&](float res[kMaxScreenTransforms][6]) {
+        const float (*to)[6] = modeMatrices(blendMode);
+        const float t = ease(blend);
+        for (int i = 0; i < numScreens; i++)
+            for (int k = 0; k < 6; k++)
+                res[i][k] = blend >= 1.f ? to[i][k] : blendFrom[i][k] + (to[i][k] - blendFrom[i][k]) * t;
+    };
 
-    const float t = battleBlend * battleBlend * (3.f - 2.f * battleBlend); // ease in and out
-    for (int i = 0; i < numScreens; i++)
-        for (int k = 0; k < 6; k++)
-            out[i][k] = hasBattleLayout
-                ? screenMatrix[i][k] + (battleMatrix[i][k] - screenMatrix[i][k]) * t
-                : screenMatrix[i][k];
+    int target = emuInstance->screenMode;
+    if (target <= 0 || target >= ScreenLayout::Overlay_Modes || !hasMode[target]) target = 0;
+    if (target != blendMode)
+    {
+        current(blendFrom);
+        blendMode = target;
+        blend = 0.f;
+    }
+    blend = std::min(1.f, blend + step);
+    touchMode = blend > 0.5f ? blendMode : 0;
+    current(out);
+
+    // the battle backdrop fades in and out with the battle layout (only a battle has one: the
+    // menu's layout is the battle's without it)
+    const bool battle = emuInstance->battleLayoutActive && blendMode == ScreenLayout::Overlay_Battle;
+    battleBlend = battle ? std::min(1.f, battleBlend + step) : std::max(0.f, battleBlend - step);
 }
 
 int ScreenPanel::effectiveScreenSizing() const

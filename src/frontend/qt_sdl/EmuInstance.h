@@ -322,6 +322,7 @@ public:
     std::atomic<double> displayRefreshRate {60.0};
     // WideMelon: a Pokémon battle is running and the battle layout is enabled (see BattleDetector)
     std::atomic<bool> battleLayoutActive {false};
+    std::atomic<int> screenMode {0};   // WideMelon: the Overlay layout's mode now (ScreenLayout::OverlayMode)
 private:
 
     std::unique_ptr<melonDS::Savestate> backupState;

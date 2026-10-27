@@ -66,8 +66,7 @@ public:
     // * integerScale: force screens to be scaled up at integer scaling factors
     // * screenSwap: whether to swap the position of both screens
     // * topAspect/botAspect: ratio by which to scale the top and bottom screen respectively
-    // * battle: WideMelon, Overlay layout during a Pokémon battle: the DS picture
-    //   moves to the left edge and the touchscreen beside it doubles in size
+    // * mode: WideMelon, the Overlay layout for a part of a Pokémon game (see OverlayMode)
     void Setup(int screenWidth, int screenHeight,
                ScreenLayoutType screenLayout,
                ScreenRotation rotation,
@@ -76,7 +75,19 @@ public:
                bool integerScale,
                bool swapScreens,
                float topAspect, float botAspect,
-               bool battle = false);
+               int mode = 0);
+
+    // WideMelon: how the Overlay layout looks in parts of a Pokémon game
+    enum OverlayMode
+    {
+        Overlay_Normal = 0,
+        Overlay_Battle,     // the DS picture moves to the left edge and the touchscreen beside it doubles in size
+        Overlay_Boxes,      // the same with the screens' places swapped: the touchscreen is the big one at the left,
+                            // the top screen at twice its size in the corner (the PC's boxes)
+        Overlay_Cover,      // the touchscreen over the top screen, all but its bottom quarter (the bag: that quarter
+                            // holds the item's description)
+        Overlay_Modes
+    };
 
     // get a 2x3 transform matrix for each screen and whether it's a top or bottom screen
     // note: the transform assumes an origin point at the top left of the display,
@@ -95,7 +106,7 @@ public:
 private:
     void SetupOverlay(int screenWidth, int screenHeight, bool mainOnly,
                       bool integerScale, bool swapScreens,
-                      float topAspect, float botAspect, bool battle);
+                      float topAspect, float botAspect, int mode);
 
     bool OverlayEnable;
     bool OverlaySwap; // the bottom screen fills the display and the top screen sits in the corner

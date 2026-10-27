@@ -130,24 +130,31 @@ ScreenLayout::ScreenLayout()
 //
 // In a Pokémon battle the widened view is mostly black, so the DS picture moves
 // to the left edge of the display; that doubles the strip on the right, and the
-// touchscreen doubles in width and height to fill it.
+// touchscreen doubles in width and height to fill it. Boxes is that with the
+// screens' places swapped; Cover puts the touchscreen over the top screen (see
+// OverlayMode). The screens keep their order (top, then bottom), so one mode
+// can slide into another.
 void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly,
     bool integerScale, bool swapScreens,
-    float topAspect, float botAspect, bool battle)
+    float topAspect, float botAspect, int mode)
 {
     // with only the top screen shown (the phone has the bottom one), it fills the display
     if (mainOnly)
         swapScreens = false;
-    battle = battle && !mainOnly && !swapScreens;
+    if (mainOnly || swapScreens)
+        mode = Overlay_Normal;
+    const bool battle = mode == Overlay_Battle || mode == Overlay_Boxes;
+    // (Boxes: the bottom screen is the main one, as when they are swapped, but drawn in the usual order)
+    const bool roles = swapScreens || mode == Overlay_Boxes;
 
     HybEnable = false;
     OverlayEnable = true;
     OverlaySwap = swapScreens;
 
-    float* mainMtx = swapScreens ? BotScreenMtx : TopScreenMtx;
-    float* sideMtx = swapScreens ? TopScreenMtx : BotScreenMtx;
-    const float mainAspect = swapScreens ? botAspect : topAspect;
-    const float sideAspect = swapScreens ? topAspect : botAspect;
+    float* mainMtx = roles ? BotScreenMtx : TopScreenMtx;
+    float* sideMtx = roles ? TopScreenMtx : BotScreenMtx;
+    const float mainAspect = roles ? botAspect : topAspect;
+    const float sideAspect = roles ? topAspect : botAspect;
 
     // fill the height, unless that would cut into the DS picture's width;
     // whatever doesn't fit across is widened view, cut evenly at both sides
@@ -160,7 +167,8 @@ void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly
     M23_Identity(mainMtx);
     M23_Scale(mainMtx, mainAspect * scale, scale);
     const float mainX = battle ? -(mainWidth - 256.f * scale) / 2 : (screenWidth - mainWidth) / 2;
-    M23_Translate(mainMtx, mainX, (screenHeight - mainHeight) / 2);
+    const float mainY = (screenHeight - mainHeight) / 2;
+    M23_Translate(mainMtx, mainX, mainY);
 
     // the corner screen fills the strip between the DS picture and the right
     // edge of the display, at most half the display's height tall
@@ -174,11 +182,18 @@ void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly
         // twice as wide and tall, within the strip right of the DS picture
         sideScale = std::min({2.f * sideScale, (screenWidth - 256.f * scale) / sideUnitWidth, screenHeight / 192.f});
     }
-    const float sideWidth = sideUnitWidth * sideScale;
+    float sideX = screenWidth - sideUnitWidth * sideScale, sideY = 0.f;
+    if (mode == Overlay_Cover)
+    {
+        // over the DS picture's top three quarters, centered on it
+        sideScale = 0.75f * scale;
+        sideX = screenWidth / 2.f - sideUnitWidth * sideScale / 2.f;
+        sideY = mainY;
+    }
 
     M23_Identity(sideMtx);
     M23_Scale(sideMtx, sideAspect * sideScale, sideScale);
-    M23_Translate(sideMtx, screenWidth - sideWidth, 0);
+    M23_Translate(sideMtx, sideX, sideY);
 
     TopEnable = true;
     BotEnable = !mainOnly;
@@ -200,7 +215,7 @@ void ScreenLayout::Setup(int screenWidth, int screenHeight,
     bool integerScale,
     bool swapScreens,
     float topAspect, float botAspect,
-    bool battle)
+    int mode)
 {
     OverlayEnable = false;
     OverlaySwap = false;
@@ -209,7 +224,7 @@ void ScreenLayout::Setup(int screenWidth, int screenHeight,
         if (sizing != screenSizing_BotOnly)
         {
             SetupOverlay(screenWidth, screenHeight, sizing == screenSizing_TopOnly,
-                         integerScale, swapScreens, topAspect, botAspect, battle);
+                         integerScale, swapScreens, topAspect, botAspect, mode);
             return;
         }
         screenLayout = screenLayout_Natural;

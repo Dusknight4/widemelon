@@ -102,16 +102,22 @@ protected:
     int screenKind[kMaxScreenTransforms];
     int numScreens;
 
-    // WideMelon: the Overlay layout during Pokémon battles, which the screens
-    // slide to and from while the emulator signals a battle (battleBlend runs
-    // from 0 to 1 on the thread that draws)
-    ScreenLayout battleLayout;
-    float battleMatrix[kMaxScreenTransforms][6];
-    bool hasBattleLayout = false;
-    float battleBlend = 0.f;
+    // WideMelon: the Overlay layout in parts of a Pokémon game (battles, the PC's boxes,
+    // the bag: ScreenLayout::OverlayMode), which the screens slide to and from as the
+    // emulator signals them (emuInstance->screenMode). modeLayout[0] is unused (layout).
+    // The slide runs on the thread that draws: from blendFrom (the matrices on screen when
+    // the mode last changed) to blendMode's, blend going from 0 to 1.
+    ScreenLayout modeLayout[ScreenLayout::Overlay_Modes];
+    float modeMatrix[ScreenLayout::Overlay_Modes][kMaxScreenTransforms][6];
+    bool hasMode[ScreenLayout::Overlay_Modes] = {};
+    int blendMode = 0;
+    float blendFrom[kMaxScreenTransforms][6];
+    float battleBlend = 0.f;    // how much of the battle layout is on screen (for its backdrop)
+    float blend = 1.f;
     std::chrono::steady_clock::time_point battleBlendTime;
-    std::atomic<bool> battleTouch {false};
-    ScreenLayout& touchLayout() { return (battleTouch && hasBattleLayout) ? battleLayout : layout; }
+    std::atomic<int> touchMode {0};
+    ScreenLayout& touchLayout() { const int m = touchMode; return (m > 0 && hasMode[m]) ? modeLayout[m] : layout; }
+    const float (*modeMatrices(int mode))[6] { return (mode > 0 && hasMode[mode]) ? modeMatrix[mode] : screenMatrix; }
     void blendedScreenMatrices(float out[kMaxScreenTransforms][6]);
 
     bool touching = false;
