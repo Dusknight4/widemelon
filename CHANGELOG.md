@@ -74,6 +74,20 @@
   the overworld code comes back during the fade out, so the layout slides
   over (in about a third of a second) while both screens are black.
   Setting: `WideMelon.BattleLayout`.
+  - **Pokémon HeartGold and SoulSilver** get the same battle layout, plus
+    layouts of their own for the screens that need the touchscreen, so the
+    games play well on a widescreen monitor or TV:
+    - The menu (X) and the PC: the touchscreen grows to 2.5 times its width
+      and height in its corner, over the top screen, which stays where it
+      is. The menu's bar over the bottom of the top screen is left out.
+    - The PC's boxes and a Pokémon's summary (from the boxes or the party):
+      the touchscreen becomes the big screen at the left, and the top
+      screen's DS picture fills the space beside it, edge to edge.
+    - The bag and the party screen: the touchscreen covers the top screen,
+      all but the strip at the bottom with the item's description.
+    The screens slide back when you leave. Each screen is detected from what
+    the game has in memory (the code it loads for that screen, the app it
+    runs, or the script of the PC); nothing in the game is changed.
 - **Use either stick** (Config > Input and hotkeys, next to the joystick
   picker, on by default). A joystick binding to a stick direction also works
   with the same direction on the other analog stick, so on a Nintendo Switch
