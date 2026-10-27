@@ -23,7 +23,9 @@ namespace WideMelon
 // unpacked here. Their menu (X) is open while the field system's byte +0xD2 isn't
 // 0 in its low 6 bits (start_menu.c's unkD2_0; HeartGold 10/22 has 2 there while
 // the menu's cursor is up, 0 once it is closed), the field system being the one
-// sFieldSysPtr points to (found through sub_0203E324, which reads it).
+// sFieldSysPtr points to (found through sub_0203E324, which reads it). The PC counts
+// as the menu: the script running is std_pokecenter_pc (2010), its ScriptEnvironment
+// being the environment of the field system's task (or of a task it called).
 class BattleDetector
 {
 public:
@@ -68,6 +70,17 @@ public:
             const melonDS::u32 fs = Read32(mainRAM, ramMask, FieldSysPtr);
             if ((fs >> 24) == 0x02 && (mainRAM[(fs + 0xD2) & ramMask] & 0x3F) != 0)
                 return Menu;
+            // (FieldSystem.taskman +0x10; TaskManager: prev +0, env +0xC; ScriptEnvironment: check +0,
+            // activeScriptNumber +0xA)
+            melonDS::u32 task = (fs >> 24) == 0x02 ? Read32(mainRAM, ramMask, fs + 0x10) : 0;
+            for (int depth = 0; depth < 4 && (task >> 24) == 0x02; depth++)
+            {
+                const melonDS::u32 env = Read32(mainRAM, ramMask, task + 0xC);
+                if ((env >> 24) == 0x02 && Read32(mainRAM, ramMask, env) == 222271
+                    && (Read32(mainRAM, ramMask, env + 8) >> 16) == 2010)
+                    return Menu;
+                task = Read32(mainRAM, ramMask, task);
+            }
         }
         return Normal;
     }

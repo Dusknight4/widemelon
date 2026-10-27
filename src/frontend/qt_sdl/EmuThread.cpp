@@ -1046,13 +1046,12 @@ void EmuThread::updateBattleState()
         battleROM = rom;
         battleDetector.Init(cart ? cart->GetROM() : nullptr, cart ? cart->GetROMLength() : 0);
     }
-    // (the menu gets the battle's layout: a touchscreen twice as big)
     const auto part = battleLayoutEnabled ? battleDetector.Detect(nds->MainRAM, nds->MainRAMMask) : WideMelon::BattleDetector::Normal;
     emuInstance->battleLayoutActive = part == WideMelon::BattleDetector::Battle;
     emuInstance->screenMode = part == WideMelon::BattleDetector::Battle ? ScreenLayout::Overlay_Battle
                             : part == WideMelon::BattleDetector::Boxes ? ScreenLayout::Overlay_Boxes
                             : part == WideMelon::BattleDetector::Bag ? ScreenLayout::Overlay_Cover
-                            : part == WideMelon::BattleDetector::Menu ? ScreenLayout::Overlay_Battle
+                            : part == WideMelon::BattleDetector::Menu ? ScreenLayout::Overlay_Menu
                             : ScreenLayout::Overlay_Normal;
     if (auto* gl = dynamic_cast<melonDS::GLRenderer*>(&nds->GetRenderer()))
         gl->SetWideBackdropWanted(emuInstance->battleLayoutActive && WideMelon::BattleBackdropEnabled());

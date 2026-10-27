@@ -83,9 +83,11 @@ public:
         Overlay_Normal = 0,
         Overlay_Battle,     // the DS picture moves to the left edge and the touchscreen beside it doubles in size
         Overlay_Boxes,      // the same with the screens' places swapped: the touchscreen is the big one at the left,
-                            // the top screen at twice its size in the corner (the PC's boxes)
+                            // the top screen's DS picture filling the corner beside it (the PC's boxes)
         Overlay_Cover,      // the touchscreen over the top screen, all but its bottom quarter (the bag: that quarter
                             // holds the item's description)
+        Overlay_Menu,       // the top screen as usual, the touchscreen in its corner at 2.5 times its size (HG/SS's
+                            // menu, the PC)
         Overlay_Modes
     };
 

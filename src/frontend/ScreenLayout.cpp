@@ -131,8 +131,8 @@ ScreenLayout::ScreenLayout()
 // In a Pokémon battle the widened view is mostly black, so the DS picture moves
 // to the left edge of the display; that doubles the strip on the right, and the
 // touchscreen doubles in width and height to fill it. Boxes is that with the
-// screens' places swapped; Cover puts the touchscreen over the top screen (see
-// OverlayMode). The screens keep their order (top, then bottom), so one mode
+// screens' places swapped; Cover puts the touchscreen over the top screen, Menu
+// makes it bigger where it is (see OverlayMode). The screens keep their order (top, then bottom), so one mode
 // can slide into another.
 void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly,
     bool integerScale, bool swapScreens,
@@ -183,7 +183,22 @@ void ScreenLayout::SetupOverlay(int screenWidth, int screenHeight, bool mainOnly
         sideScale = std::min({2.f * sideScale, (screenWidth - 256.f * scale) / sideUnitWidth, screenHeight / 192.f});
     }
     float sideX = screenWidth - sideUnitWidth * sideScale, sideY = 0.f;
-    if (mode == Overlay_Cover)
+    if (mode == Overlay_Boxes)
+    {
+        // the top screen's DS picture fills the strip right of the touchscreen, edge to edge with
+        // it; its widened view goes under the touchscreen at the left and off the display at the right
+        const float margin = (sideUnitWidth - 256.f) / 2.f;
+        sideScale = std::min((screenWidth - mainX - mainWidth) / 256.f, screenHeight / 192.f);
+        sideScale = std::max(sideScale, (screenHeight / 10.f) / 192.f);
+        sideX = screenWidth - 256.f * sideScale - margin * sideScale;
+    }
+    else if (mode == Overlay_Menu)
+    {
+        // 2.5 times as wide and tall, still in the corner, over the top screen
+        sideScale = std::min({2.5f * sideScale, screenWidth / sideUnitWidth, screenHeight / 192.f});
+        sideX = screenWidth - sideUnitWidth * sideScale;
+    }
+    else if (mode == Overlay_Cover)
     {
         // over the DS picture's top three quarters, centered on it
         sideScale = 0.75f * scale;
