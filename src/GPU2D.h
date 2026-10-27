@@ -70,6 +70,8 @@ public:
     u32 DispCnt;
     u32 DispCntLatch[3];
     u8 LayerEnable;         // layer enable - enable delayed by 2 scanlines
+    u8 HiddenLayers = 0;    // WideMelon: BG layers the frontend leaves out of the picture (bit 0 = BG0...)
+    u8 LayersOn = 0;        // (LayerEnable as the game set it, hidden layers included)
     u8 OBJEnable;           // OBJ enable (for OBJ rendering) - enable delayed by 1 scanline
     u8 ForcedBlank;         // forced blank - disable delayed by 2 scanlines
     u16 BGCnt[4];

@@ -568,7 +568,8 @@ void GPU2D::UpdateRegistersPreDraw(bool reset)
     DispCntLatch[2] = DispCntLatch[1];
     DispCntLatch[1] = DispCntLatch[0];
     DispCntLatch[0] = DispCnt;
-    LayerEnable = ((DispCntLatch[2] & DispCnt) >> 8) & 0x1F;
+    LayersOn = ((DispCntLatch[2] & DispCnt) >> 8) & 0x1F;
+    LayerEnable = LayersOn & ~HiddenLayers;
     OBJEnable = ((DispCntLatch[1] & DispCnt) >> 12) & 0x1;
     ForcedBlank = ((DispCntLatch[2] | DispCnt) >> 7) & 0x1;
 
@@ -639,7 +640,7 @@ void GPU2D::UpdateRegistersPostDraw(bool reset)
     {
         // reference points for rotscale layers are only updated if the layer is enabled
         // TODO do they get updated if the layer isn't a rotscale layer?
-        if (!(LayerEnable & (4<<i)))
+        if (!(LayersOn & (4<<i)))
             continue;
 
         if (reset)

@@ -1048,10 +1048,14 @@ void EmuThread::updateBattleState()
     }
     const auto part = battleLayoutEnabled ? battleDetector.Detect(nds->MainRAM, nds->MainRAMMask) : WideMelon::BattleDetector::Normal;
     emuInstance->battleLayoutActive = part == WideMelon::BattleDetector::Battle;
+    // (HG/SS's menu: without its bar over the top screen, which the bigger touchscreen makes no use of)
+    nds->GPU.GPU2D_A.HiddenLayers = part == WideMelon::BattleDetector::Menu ? 0x08 : 0;
     emuInstance->screenMode = part == WideMelon::BattleDetector::Battle ? ScreenLayout::Overlay_Battle
                             : part == WideMelon::BattleDetector::Boxes ? ScreenLayout::Overlay_Boxes
                             : part == WideMelon::BattleDetector::Bag ? ScreenLayout::Overlay_Cover
+                            : part == WideMelon::BattleDetector::Party ? ScreenLayout::Overlay_Cover
                             : part == WideMelon::BattleDetector::Menu ? ScreenLayout::Overlay_Menu
+                            : part == WideMelon::BattleDetector::PC ? ScreenLayout::Overlay_Menu
                             : ScreenLayout::Overlay_Normal;
     if (auto* gl = dynamic_cast<melonDS::GLRenderer*>(&nds->GetRenderer()))
         gl->SetWideBackdropWanted(emuInstance->battleLayoutActive && WideMelon::BattleBackdropEnabled());
