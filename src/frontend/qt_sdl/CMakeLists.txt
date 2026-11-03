@@ -233,6 +233,34 @@ target_link_libraries(melonDS PRIVATE core)
 target_link_libraries(melonDS PRIVATE PkgConfig::SDL2 PkgConfig::LibArchive PkgConfig::Zstd PkgConfig::Faad)
 target_link_libraries(melonDS PRIVATE ${QT_LINK_LIBS} ${CMAKE_DL_LIBS})
 
+# MultiMelon: 3DS games through Azahar's emulation core (ThreeDS.h). Azahar is built on its own
+# (its core libraries, Qt off), then tools/azahar_libs.py makes copies of its libraries whose
+# names don't clash with MultiMelon's; those are linked here.
+option(MULTIMELON_3DS "Play 3DS games with Azahar's emulation core" OFF)
+if (MULTIMELON_3DS)
+    set(AZAHAR_SOURCE_DIR "" CACHE PATH "Azahar's source (its unified source archive, extracted)")
+    set(AZAHAR_BUILD_DIR "" CACHE PATH "The build of Azahar's core libraries")
+    set(AZAHAR_LIBS_DIR "" CACHE PATH "Their copies from tools/azahar_libs.py (its --out)")
+    if (NOT EXISTS "${AZAHAR_LIBS_DIR}/azahar-libs.txt")
+        message(FATAL_ERROR "MULTIMELON_3DS: no ${AZAHAR_LIBS_DIR}/azahar-libs.txt (run tools/azahar_libs.py)")
+    endif()
+
+    target_sources(melonDS PRIVATE ThreeDS.cpp)
+    target_compile_definitions(melonDS PRIVATE MULTIMELON_3DS)
+    set(AZAHAR_EXT "${AZAHAR_SOURCE_DIR}/externals")
+    # (as Azahar compiles its own code: its headers, definitions and C++20)
+    set_source_files_properties(ThreeDS.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${AZAHAR_BUILD_DIR}/src;${AZAHAR_SOURCE_DIR}/src;${AZAHAR_EXT}/boost;${AZAHAR_EXT}/fmt/include;${AZAHAR_EXT}/dynarmic/src;${AZAHAR_EXT}/microprofile;${AZAHAR_EXT}/dds-ktx;${AZAHAR_EXT}/glad/include"
+        COMPILE_DEFINITIONS "BOOST_ALL_NO_LIB;BOOST_ASIO_DISABLE_CONCEPTS;BOOST_DATE_TIME_NO_LIB;BOOST_ERROR_CODE_HEADER_ONLY;BOOST_NO_CXX98_FUNCTION_BASE;BOOST_REGEX_NO_LIB;BOOST_SYSTEM_NO_LIB;CITRA_HAS_SSE42;ENABLE_OPENGL;ENABLE_SDL2;ENABLE_SOFTWARE_RENDERER;HAVE_CUBEB;MICROPROFILE_ENABLED=0;_FILE_OFFSET_BITS=64"
+        COMPILE_OPTIONS "-std=gnu++20;-msse4.2")
+
+    file(STRINGS "${AZAHAR_LIBS_DIR}/azahar-libs.txt" AZAHAR_LIBS)
+    target_link_libraries(melonDS PRIVATE -Wl,--start-group ${AZAHAR_LIBS} -Wl,--end-group)
+    if (WIN32)
+        target_link_libraries(melonDS PRIVATE winmm ws2_32 psapi imm32 version bcrypt crypt32 ole32 uuid avrt ksuser ssp)
+    endif()
+endif()
+
 if (WIN32)
     option(PORTABLE "Make a portable build that looks for its configuration in the current directory" ON)
 

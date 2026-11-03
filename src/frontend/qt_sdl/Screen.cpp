@@ -34,6 +34,9 @@
 
 #include "main.h"
 #include "EmuInstance.h"
+#ifdef MULTIMELON_3DS
+#include "ThreeDS.h"
+#endif
 #include "PhoneBridge.h"
 
 #include "NDS.h"
@@ -191,6 +194,14 @@ void ScreenPanel::setupScreenLayout()
         aspectTop = WideMelon::Width() / 256.f;
         aspectBot = 1.f;
     }
+#ifdef MULTIMELON_3DS
+    // a 3DS game: the top screen 400x240 (5:3), the touchscreen 320x240 (4:3)
+    if (emuInstance->threeDSActive)
+    {
+        aspectTop = 400.f / 320.f;
+        aspectBot = 1.f;
+    }
+#endif
 
     layout.Setup(w, h,
                 static_cast<ScreenLayoutType>(screenLayout),
@@ -1059,7 +1070,7 @@ void ScreenPanelGL::initOpenGL()
     if (!glContext) return;
     if (glInited) return;
 
-    if (GLThreadAllowed && mainWindow->getWindowID() == 0 && !melonDS::GLThread::Running())
+    if (GLThreadAllowed && mainWindow->getWindowID() == 0 && !melonDS::GLThread::Running() && !emuInstance->threeDSActive)
     {
         GL::Context* ctx = glContext.get();
         melonDS::GLThread::Start([ctx] { ctx->MakeCurrent(); }, [ctx] { ctx->DoneCurrent(); });
@@ -1369,47 +1380,56 @@ void ScreenPanelGL::drawScreen()
     if (emuThread->emuIsActive())
     {
         auto nds = emuInstance->getNDS();
-
-        glUseProgram(screenShaderProgram);
-        glUniform2f(screenShaderScreenSizeULoc, w / factor, h / factor);
-
-        void* topbuf; void* bottombuf;
-        const bool ramFramebuffers = nds->GPU.GetFramebuffers(&topbuf, &bottombuf);
-        GLuint phoneSourceTexture = 0;
-        int phoneSourceWidth = 256;
-        int phoneSourceHeight = 192;
-        if (ramFramebuffers)
-        {
-            // if we're doing a regular render, use the provided framebuffers
-            // otherwise, GetFramebuffers() will set up the required state
-
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D_ARRAY, screenTexture);
-
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, 256, 192, 1, GL_BGRA,
-                            GL_UNSIGNED_BYTE, topbuf);
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 1, 256, 192, 1, GL_BGRA,
-                            GL_UNSIGNED_BYTE, bottombuf);
-            phoneSourceTexture = screenTexture;
-        }
+        GLuint displayTexture = 0;
+#ifdef MULTIMELON_3DS
+        // a 3DS game's screens, laid out as a DS's (see ThreeDS.h)
+        if (emuInstance->threeDSActive)
+            displayTexture = ThreeDS::CopyScreens();
         else
+#endif
         {
-            GLuint texid = *(GLuint*)topbuf;
+            glUseProgram(screenShaderProgram);
+            glUniform2f(screenShaderScreenSizeULoc, w / factor, h / factor);
 
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D_ARRAY, texid);
-            phoneSourceTexture = texid;
-            const int renderScale = std::clamp(mainWindow->getEmuInstance()->getGlobalConfig().GetInt("3D.GL.ScaleFactor"), 1, 8);
-            phoneSourceWidth = WideMelon::Width() * renderScale;
-            phoneSourceHeight = 192 * renderScale;
+            void* topbuf; void* bottombuf;
+            const bool ramFramebuffers = nds->GPU.GetFramebuffers(&topbuf, &bottombuf);
+            GLuint phoneSourceTexture = 0;
+            int phoneSourceWidth = 256;
+            int phoneSourceHeight = 192;
+            if (ramFramebuffers)
+            {
+                // if we're doing a regular render, use the provided framebuffers
+                // otherwise, GetFramebuffers() will set up the required state
+
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, screenTexture);
+
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, 256, 192, 1, GL_BGRA,
+                                GL_UNSIGNED_BYTE, topbuf);
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 1, 256, 192, 1, GL_BGRA,
+                                GL_UNSIGNED_BYTE, bottombuf);
+                phoneSourceTexture = screenTexture;
+            }
+            else
+            {
+                GLuint texid = *(GLuint*)topbuf;
+
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, texid);
+                phoneSourceTexture = texid;
+                const int renderScale = std::clamp(mainWindow->getEmuInstance()->getGlobalConfig().GetInt("3D.GL.ScaleFactor"), 1, 8);
+                phoneSourceWidth = WideMelon::Width() * renderScale;
+                phoneSourceHeight = 192 * renderScale;
+            }
+
+            capturePhoneFrame(phoneSourceTexture, phoneSourceWidth, phoneSourceHeight);
+
+            displayTexture = smoothFrame(nds, phoneSourceTexture);
         }
-
-        capturePhoneFrame(phoneSourceTexture, phoneSourceWidth, phoneSourceHeight);
-
-        const GLuint displayTexture = smoothFrame(nds, phoneSourceTexture);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, w, h);
         glUseProgram(screenShaderProgram);
+        glUniform2f(screenShaderScreenSizeULoc, w / factor, h / factor);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D_ARRAY, displayTexture);
 

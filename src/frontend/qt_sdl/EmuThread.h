@@ -116,6 +116,14 @@ public:
     void emuReset();
 
     int bootROM(const QStringList& filename, QString& errorstr);
+#ifdef MULTIMELON_3DS
+    // MultiMelon: a 3DS game (ThreeDS.h) in place of the DS, on this thread
+    bool bootThreeDS(const QString& path, QString& error);
+    void stopThreeDS();
+    void runThreeDSFrame();
+    unsigned threeDSFrames = 0;
+    double threeDSMeasureTime = 0.0;
+#endif
     int bootFirmware(QString& errorstr);
     int insertCart(const QStringList& filename, bool gba, QString& errorstr);
     void ejectCart(bool gba);

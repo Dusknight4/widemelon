@@ -105,6 +105,9 @@ QStringList NdsRomExtensions { ".nds", ".srl", ".dsi", ".ids" };
 
 QString GbaRomMimeType = "application/x-gba-rom";
 QStringList GbaRomExtensions { ".gba", ".agb" };
+#ifdef MULTIMELON_3DS
+QStringList ThreeDSRomExtensions { ".3ds", ".cci", ".cxi", ".3dsx", ".app" };
+#endif
 
 
 // This list of supported archive formats is based on libarchive(3) version 3.6.2 (2022-12-09).
@@ -1599,6 +1602,14 @@ QStringList MainWindow::pickROM(bool gba)
     extraFilters += ";;Archives (" + archives + ")";
     allROMs += " " + archives;
 #endif
+#ifdef MULTIMELON_3DS
+    if (!gba)
+    {
+        QString threeDS = "*" + ThreeDSRomExtensions.join(" *");
+        extraFilters += ";;3DS games (" + threeDS + ")";
+        allROMs += " " + threeDS;
+    }
+#endif
     extraFilters += ";;All files (*.*)";
 
     const QString filename = QFileDialog::getOpenFileName(
@@ -2594,6 +2605,7 @@ void MainWindow::onScreenEmphasisToggled()
 
 void MainWindow::onEmuStart()
 {
+    emit screenLayoutChange();  // (a 3DS game's screens have their own shapes)
     if (homePanel)
         homePanel->hide();
 
@@ -2622,6 +2634,7 @@ void MainWindow::onEmuStart()
 
 void MainWindow::onEmuStop()
 {
+    emit screenLayoutChange();
     updateHomePanel();
     if (homePanel)
     {

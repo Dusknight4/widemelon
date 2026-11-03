@@ -90,6 +90,10 @@ static FILE* FrameLog()
 }
 #include "PhoneBridge.h"
 #include "main.h"
+#ifdef MULTIMELON_3DS
+#include "ThreeDS.h"
+#include "GLThread.h"
+#endif
 
 #include "types.h"
 #include "version.h"
@@ -276,6 +280,15 @@ void EmuThread::run()
         if (emuStatus == emuStatus_Running || emuStatus == emuStatus_FrameStep)
         {
             if (emuStatus == emuStatus_FrameStep) emuStatus = emuStatus_Paused;
+
+#ifdef MULTIMELON_3DS
+            if (emuInstance->threeDSActive)
+            {
+                runThreeDSFrame();
+                handleMessages();
+                continue;
+            }
+#endif
 
             if (emuInstance->hotkeyPressed(HK_SolarSensorDecrease))
             {
@@ -660,6 +673,9 @@ void EmuThread::handleMessages()
             break;
 
         case msg_EmuStop:
+#ifdef MULTIMELON_3DS
+            stopThreeDS();
+#endif
             if (msg.param.value<bool>())
                 emuInstance->nds->Stop();
             emuStatus = emuStatus_Paused;
@@ -703,6 +719,15 @@ void EmuThread::handleMessages()
 
         case msg_BootROM:
             msgResult = 0;
+#ifdef MULTIMELON_3DS
+            if (!msg.param.value<QStringList>().isEmpty()
+                && ThreeDS::IsThreeDSFile(msg.param.value<QStringList>()[0].toStdString()))
+            {
+                msgResult = bootThreeDS(msg.param.value<QStringList>()[0], msgError) ? 1 : 0;
+                break;
+            }
+            stopThreeDS();
+#endif
             if (!emuInstance->loadROM(msg.param.value<QStringList>(), true, msgError))
                 break;
 
@@ -898,6 +923,87 @@ bool EmuThread::emuIsActive()
 {
     return emuActive;
 }
+
+#ifdef MULTIMELON_3DS
+bool EmuThread::bootThreeDS(const QString& path, QString& error)
+{
+    if (!useOpenGL)
+    {
+        error = "3DS games need the OpenGL display (Config > Video settings: an OpenGL renderer).";
+        return false;
+    }
+    stopThreeDS();
+
+    // Azahar makes its GL calls straight to the driver, on this thread: OpenGL on its own
+    // thread (GLThread) stays off while a 3DS game runs
+    melonDS::GLThread::Stop();
+    emuInstance->makeCurrentGL();
+    ThreeDS::Init((emuDirectory + "/3ds").toStdString());
+    ThreeDS::SetResolution(std::clamp(emuInstance->getGlobalConfig().GetInt("3D.GL.ScaleFactor"), 1, 10));
+    const std::string err = ThreeDS::Load(path.toStdString());
+    if (!err.empty())
+    {
+        error = QString::fromStdString(err);
+        return false;
+    }
+    emuInstance->threeDSActive = true;
+    threeDSFrames = 0;
+    threeDSMeasureTime = SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
+    return true;
+}
+
+void EmuThread::stopThreeDS()
+{
+    if (!emuInstance->threeDSActive) return;
+    if (useOpenGL) emuInstance->makeCurrentGL();
+    ThreeDS::Unload();
+    emuInstance->threeDSActive = false;
+}
+
+void EmuThread::runThreeDSFrame()
+{
+    emuInstance->makeCurrentGL();
+
+    // the DS's keys as the 3DS's, the joystick's sticks as the Circle Pad and C-Stick,
+    // the touchscreen's DS coordinates (256x192) as the 3DS's (320x240)
+    ThreeDS::Input in;
+    in.buttons = ~emuInstance->inputMask & 0xFFF;
+    if (SDL_Joystick* js = emuInstance->getJoystick())
+    {
+        auto axis = [js](int i) {
+            if (i >= SDL_JoystickNumAxes(js)) return 0.f;
+            const float v = SDL_JoystickGetAxis(js, i) / 32767.f;
+            return std::abs(v) < 0.15f ? 0.f : std::clamp(v, -1.f, 1.f);
+        };
+        in.circleX = axis(0);
+        in.circleY = -axis(1);
+        in.cstickX = axis(2);
+        in.cstickY = -axis(3);
+    }
+    in.touching = emuInstance->isTouching;
+    in.touchX = emuInstance->touchX * (320.f / 256.f);
+    in.touchY = emuInstance->touchY * (240.f / 192.f);
+
+    ThreeDS::RunFrame(in);
+    if (!ThreeDS::Running())
+    {
+        emuInstance->threeDSActive = false;
+        emuInstance->osdAddMessage(0xFFA0A0, "The 3DS game stopped.");
+    }
+    emuInstance->drawScreen();
+
+    threeDSFrames++;
+    const double now = SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
+    if (now - threeDSMeasureTime >= 1.0)
+    {
+        char title[100];
+        snprintf(title, sizeof(title), "[%.0f] MultiMelon " WIDEMELON_VERSION " (3DS)", threeDSFrames / (now - threeDSMeasureTime));
+        changeWindowTitle(title);
+        threeDSFrames = 0;
+        threeDSMeasureTime = now;
+    }
+}
+#endif
 
 int EmuThread::bootROM(const QStringList& filename, QString& errorstr)
 {
