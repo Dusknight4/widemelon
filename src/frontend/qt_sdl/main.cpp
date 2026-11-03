@@ -50,6 +50,7 @@
 #include "duckstation/gl/context.h"
 
 #include "main.h"
+#include "CrashHandler.h"
 #include "version.h"
 
 #include "Config.h"
@@ -282,6 +283,8 @@ static void signalHandler(int signal)
 
 int main(int argc, char** argv)
 {
+    CrashHandler::Install();    // MultiMelon: crashes/crash-<date>.txt and .dmp next to the exe
+    if (getenv("MULTIMELON_TEST_CRASH")) *(volatile int*)nullptr = 0;   // (to try the crash report)
     sysTimer.start();
     srand(time(nullptr));
 

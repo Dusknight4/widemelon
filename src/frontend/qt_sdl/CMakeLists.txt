@@ -5,6 +5,7 @@ include(FixInterfaceIncludes)
 
 set(SOURCES_QT_SDL
     main.cpp
+    CrashHandler.cpp
     main_shaders.h
     Screen.cpp
     FrameInterpolator.h
@@ -282,7 +283,7 @@ if (WIN32)
     endif()
 
 
-    target_link_libraries(melonDS PRIVATE ws2_32 iphlpapi)
+    target_link_libraries(melonDS PRIVATE ws2_32 iphlpapi dbghelp psapi)
     set_target_properties(melonDS PROPERTIES WIN32_EXECUTABLE $<IF:$<CONFIG:Debug>,OFF,ON>)
 
     if (MINGW)

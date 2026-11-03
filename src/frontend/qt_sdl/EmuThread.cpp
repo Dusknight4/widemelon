@@ -1003,7 +1003,8 @@ void EmuThread::runThreeDSFrame()
     // one pushed further), its triggers as ZL and ZR, its Home button as the 3DS's; the
     // touchscreen's DS coordinates (256x192) as the 3DS's (320x240)
     ThreeDS::Input in;
-    in.buttons = ~emuInstance->inputMask & 0xFFF;
+    // (with the debugging aids' scripted keys, as the DS's)
+    in.buttons = ~(emuInstance->inputMask & ScriptedKeyMask() & TestInputMask()) & 0xFFF;
     SDL_LockMutex(emuInstance->joyMutex.get());
     if (SDL_GameController* pad = emuInstance->controller)
     {
