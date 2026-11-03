@@ -234,7 +234,7 @@ void Init(const std::string& userDir)
     std::string dir = userDir;
     if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
     FileUtil::SetUserPath(dir);
-    Common::Log::Initialize(dir + "azahar_log.txt");
+    Common::Log::Initialize();   // (its log folder, in the user folder: log/azahar_log.txt)
     Common::Log::Start();
 
     for (const auto& module : Service::service_module_map)
@@ -275,7 +275,8 @@ std::string Load(const std::string& path)
     switch (result)
     {
     case R::Success: break;
-    case R::ErrorGetLoader: return "This file isn't a 3DS game MultiMelon can open.";
+    case R::ErrorGetLoader:
+    case R::ErrorSystemMode: return "This file isn't a 3DS game MultiMelon can open.";
     case R::ErrorLoader_ErrorEncrypted:
         return "This 3DS game is encrypted. Dump it decrypted with GodMode9 (on your 3DS: \"Dump cart (decrypted)\", "
                "or a decrypted CIA of an installed game).";
