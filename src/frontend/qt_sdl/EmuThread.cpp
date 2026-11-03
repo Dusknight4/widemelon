@@ -91,6 +91,7 @@ static FILE* FrameLog()
 #include "PhoneBridge.h"
 #include "main.h"
 #ifdef MULTIMELON_3DS
+#include <QFileInfo>
 #include "ThreeDS.h"
 #include "GLThread.h"
 #endif
@@ -690,6 +691,19 @@ void EmuThread::handleMessages()
             break;
 
         case msg_EmuReset:
+#ifdef MULTIMELON_3DS
+            if (emuInstance->threeDSActive)
+            {
+                emuInstance->makeCurrentGL();
+                const std::string err = ThreeDS::Reset();
+                if (!err.empty())
+                {
+                    emuInstance->threeDSActive = false;
+                    emuInstance->osdAddMessage(0xFFA0A0, "%s", err.c_str());
+                }
+            }
+            else
+#endif
             emuInstance->reset();
 
             emuStatus = emuStatus_Running;
@@ -777,10 +791,26 @@ void EmuThread::handleMessages()
             break;
 
         case msg_SaveState:
+#ifdef MULTIMELON_3DS
+            if (emuInstance->threeDSActive)
+            {
+                emuInstance->makeCurrentGL();
+                msgResult = ThreeDS::SaveState(msg.param.value<QString>().toStdString());
+                break;
+            }
+#endif
             msgResult = emuInstance->saveState(msg.param.value<QString>().toStdString());
             break;
 
         case msg_LoadState:
+#ifdef MULTIMELON_3DS
+            if (emuInstance->threeDSActive)
+            {
+                emuInstance->makeCurrentGL();
+                msgResult = ThreeDS::LoadState(msg.param.value<QString>().toStdString());
+                break;
+            }
+#endif
             msgResult = emuInstance->loadState(msg.param.value<QString>().toStdString());
             break;
 
@@ -947,6 +977,11 @@ bool EmuThread::bootThreeDS(const QString& path, QString& error)
         return false;
     }
     emuInstance->threeDSActive = true;
+    // (savestates and the like are named after the file opened, as a DS game's)
+    const QFileInfo info(path);
+    emuInstance->baseROMDir = (info.absolutePath() + "/").toStdString();
+    emuInstance->baseROMName = info.fileName().toStdString();
+    emuInstance->baseAssetName = info.completeBaseName().toStdString();
     threeDSFrames = 0;
     threeDSMeasureTime = SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
     return true;
@@ -964,22 +999,40 @@ void EmuThread::runThreeDSFrame()
 {
     emuInstance->makeCurrentGL();
 
-    // the DS's keys as the 3DS's, the joystick's sticks as the Circle Pad and C-Stick,
-    // the touchscreen's DS coordinates (256x192) as the 3DS's (320x240)
+    // the DS's keys as the 3DS's; a controller's sticks, either of them, as the Circle Pad (the
+    // one pushed further), its triggers as ZL and ZR, its Home button as the 3DS's; the
+    // touchscreen's DS coordinates (256x192) as the 3DS's (320x240)
     ThreeDS::Input in;
     in.buttons = ~emuInstance->inputMask & 0xFFF;
-    if (SDL_Joystick* js = emuInstance->getJoystick())
+    SDL_LockMutex(emuInstance->joyMutex.get());
+    if (SDL_GameController* pad = emuInstance->controller)
     {
-        auto axis = [js](int i) {
-            if (i >= SDL_JoystickNumAxes(js)) return 0.f;
-            const float v = SDL_JoystickGetAxis(js, i) / 32767.f;
-            return std::abs(v) < 0.15f ? 0.f : std::clamp(v, -1.f, 1.f);
-        };
-        in.circleX = axis(0);
-        in.circleY = -axis(1);
-        in.cstickX = axis(2);
-        in.cstickY = -axis(3);
+        auto axis = [pad](SDL_GameControllerAxis a) { return SDL_GameControllerGetAxis(pad, a) / 32767.f; };
+        float x = axis(SDL_CONTROLLER_AXIS_LEFTX), y = axis(SDL_CONTROLLER_AXIS_LEFTY);
+        const float rx = axis(SDL_CONTROLLER_AXIS_RIGHTX), ry = axis(SDL_CONTROLLER_AXIS_RIGHTY);
+        if (rx * rx + ry * ry > x * x + y * y) { x = rx; y = ry; }
+        if (x * x + y * y > 0.15f * 0.15f)
+        {
+            in.circleX = std::clamp(x, -1.f, 1.f);
+            in.circleY = std::clamp(-y, -1.f, 1.f);
+        }
+        if (axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 0.5f) in.buttons |= 1u << 12;
+        if (axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 0.5f) in.buttons |= 1u << 13;
+        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_GUIDE)) in.buttons |= 1u << 14;
     }
+    else if (SDL_Joystick* js = emuInstance->getJoystick())
+    {
+        // (a controller SDL has no mapping for: its first axes as the two sticks)
+        auto axis = [js](int i) { return i < SDL_JoystickNumAxes(js) ? SDL_JoystickGetAxis(js, i) / 32767.f : 0.f; };
+        float x = axis(0), y = axis(1);
+        if (axis(2) * axis(2) + axis(3) * axis(3) > x * x + y * y) { x = axis(2); y = axis(3); }
+        if (x * x + y * y > 0.15f * 0.15f)
+        {
+            in.circleX = std::clamp(x, -1.f, 1.f);
+            in.circleY = std::clamp(-y, -1.f, 1.f);
+        }
+    }
+    SDL_UnlockMutex(emuInstance->joyMutex.get());
     in.touching = emuInstance->isTouching;
     in.touchX = emuInstance->touchX * (320.f / 256.f);
     in.touchY = emuInstance->touchY * (240.f / 192.f);

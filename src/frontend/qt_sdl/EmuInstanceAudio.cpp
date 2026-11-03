@@ -164,6 +164,13 @@ void EmuInstance::audioCallback(void* data, Uint8* stream, int len)
     EmuInstance* inst = (EmuInstance*)data;
     len /= (sizeof(s16) * 2);
 
+    // MultiMelon: while a 3DS game runs (it has its own sound output), or before a DS exists
+    if (inst->threeDSActive || !inst->nds)
+    {
+        memset(stream, 0, len*sizeof(s16)*2);
+        return;
+    }
+
     double skew = std::max(inst->targetFPS / INTERNAL_FRAME_RATE, 0.5);
     inst->nds->SPU.SetOutputSkew(skew);
 

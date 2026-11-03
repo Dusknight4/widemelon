@@ -17,7 +17,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <memory>
+#include <vector>
 
 // MultiMelon's glad first: this file's own GL calls go through it (Azahar's copy, inside its
 // libraries, has its names changed at link time; see cmake/Azahar.cmake)
@@ -27,10 +29,13 @@
 #include "common/logging/backend.h"
 #include "common/settings.h"
 #include "core/core.h"
+#include "core/file_sys/cia_container.h"
+#include "core/file_sys/title_metadata.h"
 #include "core/frontend/applets/default_applets.h"
 #include "core/frontend/emu_window.h"
 #include "core/frontend/image_interface.h"
 #include "core/frontend/input.h"
+#include "core/hle/service/am/am.h"
 #include "core/hle/service/service.h"
 #include "core/loader/loader.h"
 #include "video_core/gpu.h"
@@ -50,6 +55,7 @@ Input g_input;          // this frame's, read by the input devices below
 int g_resolution = 2;
 bool g_running = false;
 bool g_glLoaded = false;
+std::string g_gamePath;     // what was started (a CIA's installed game, not the CIA)
 
 class Button final : public ::Input::ButtonDevice
 {
@@ -214,6 +220,51 @@ void SetupSettings()
     v.current_input_profile.motion_device = "engine:motion_emu";
 }
 
+// A CIA into the virtual 3DS (its SD card or NAND), as the 3DS's installer does; then the
+// path of the game it holds. "" when done, else what went wrong.
+std::string InstallCIA(const std::string& path, std::string& gamePath)
+{
+    u64 titleId = 0;
+    {
+        FileUtil::IOFile file(path, "rb");
+        FileSys::CIAContainer cia;
+        if (!file.IsOpen() || cia.Load(&file) != Loader::ResultStatus::Success)
+            return "This CIA file couldn't be read.";
+        titleId = cia.GetTitleMetadata().GetTitleID();
+    }
+    using S = Service::AM::InstallStatus;
+    switch (Service::AM::InstallCIA(path))
+    {
+    case S::Success: break;
+    case S::ErrorEncrypted:
+        return "This CIA is encrypted. Make a decrypted one with GodMode9 on your 3DS (its title manager: "
+               "\"Build CIA (decrypted)\").";
+    case S::ErrorInvalid: return "This CIA file is damaged or not a 3DS title.";
+    default: return "This CIA couldn't be installed.";
+    }
+    // (an application, or a demo; an update, DLC or system title has no game to start)
+    const u32 kind = (u32)(titleId >> 32);
+    if (kind != 0x00040000 && kind != 0x00040002)
+        return "Installed. (It's an update or DLC: open the game itself to play.)";
+    gamePath = Service::AM::GetTitleContentPath(Service::AM::GetTitleMediaType(titleId), titleId);
+    if (gamePath.empty() || !FileUtil::Exists(gamePath))
+        return "The CIA was installed, but its game wasn't found.";
+    return "";
+}
+
+// RunLoop until the kernel's background work (file access...) is done: a savestate can't be made in
+// the middle of it (what Azahar's own frontends wait for, see citra_libretro's DrainAsyncOperations)
+bool WaitAsync(Core::System& system)
+{
+    const auto start = std::chrono::steady_clock::now();
+    while (system.KernelRunning() && system.Kernel().AreAsyncOperationsPending())
+    {
+        if (std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) return false;
+        if (system.RunLoop() != Core::System::ResultStatus::Success) return false;
+    }
+    return true;
+}
+
 }
 
 bool IsThreeDSFile(const std::string& path)
@@ -222,7 +273,8 @@ bool IsThreeDSFile(const std::string& path)
     if (dot == std::string::npos) return false;
     std::string ext = path.substr(dot + 1);
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-    return ext == "3ds" || ext == "cci" || ext == "cxi" || ext == "3dsx" || ext == "app" || ext == "elf" || ext == "axf";
+    return ext == "3ds" || ext == "cci" || ext == "cxi" || ext == "3dsx" || ext == "app" || ext == "elf" || ext == "axf"
+        || ext == "cia";
 }
 
 void Init(const std::string& userDir)
@@ -251,6 +303,17 @@ void SetResolution(int factor) { g_resolution = std::clamp(factor, 1, 10); }
 std::string Load(const std::string& path)
 {
     Unload();
+    std::string gamePath = path;
+    {
+        const size_t dot = path.find_last_of('.');
+        std::string ext = dot == std::string::npos ? "" : path.substr(dot + 1);
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        if (ext == "cia")
+        {
+            const std::string err = InstallCIA(path, gamePath);
+            if (!err.empty()) return err;
+        }
+    }
     if (!g_glLoaded)
     {
         if (!az_gladLoadGL()) return "OpenGL 4.3 is needed for 3DS games.";
@@ -267,7 +330,7 @@ std::string Load(const std::string& path)
     auto& system = Core::System::GetInstance();
     system.ApplySettings();
     g_azaharState = OpenGL::OpenGLState{};
-    const auto result = system.Load(*g_window, path);
+    const auto result = system.Load(*g_window, gamePath);
     g_azaharState = OpenGL::OpenGLState::GetCurState();
     DefaultGLState();
 
@@ -291,7 +354,66 @@ std::string Load(const std::string& path)
     system.GPU().ApplyPerProgramSettings(programId);
     system.RegisterCoreLoopThreadId();
     g_running = true;
+    g_gamePath = gamePath;
     return "";
+}
+
+std::string Reset()
+{
+    const std::string path = g_gamePath;
+    return path.empty() ? "No 3DS game is running." : Load(path);
+}
+
+bool SaveState(const std::string& path)
+{
+    if (!g_running) return false;
+    auto& system = Core::System::GetInstance();
+    DefaultGLState();
+    g_azaharState.Apply();
+    bool ok = false;
+    try
+    {
+        if (WaitAsync(system))
+        {
+            const std::vector<u8> state = system.SaveStateBuffer();
+            FileUtil::IOFile file(path, "wb");
+            ok = !state.empty() && file.IsOpen() && file.WriteBytes(state.data(), state.size()) == state.size();
+        }
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR(Frontend, "savestate: {}", e.what());
+    }
+    g_azaharState = OpenGL::OpenGLState::GetCurState();
+    DefaultGLState();
+    return ok;
+}
+
+bool LoadState(const std::string& path)
+{
+    if (!g_running) return false;
+    std::vector<u8> state;
+    {
+        FileUtil::IOFile file(path, "rb");
+        if (!file.IsOpen()) return false;
+        state.resize(file.GetSize());
+        if (state.empty() || file.ReadBytes(state.data(), state.size()) != state.size()) return false;
+    }
+    auto& system = Core::System::GetInstance();
+    DefaultGLState();
+    g_azaharState.Apply();
+    bool ok = false;
+    try
+    {
+        ok = WaitAsync(system) && system.LoadStateBuffer(std::move(state));
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR(Frontend, "savestate: {}", e.what());
+    }
+    g_azaharState = OpenGL::OpenGLState::GetCurState();
+    DefaultGLState();
+    return ok;
 }
 
 void Unload()

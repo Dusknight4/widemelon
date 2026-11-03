@@ -106,7 +106,7 @@ QStringList NdsRomExtensions { ".nds", ".srl", ".dsi", ".ids" };
 QString GbaRomMimeType = "application/x-gba-rom";
 QStringList GbaRomExtensions { ".gba", ".agb" };
 #ifdef MULTIMELON_3DS
-QStringList ThreeDSRomExtensions { ".3ds", ".cci", ".cxi", ".3dsx", ".app" };
+QStringList ThreeDSRomExtensions { ".3ds", ".cci", ".cxi", ".3dsx", ".app", ".cia" };
 #endif
 
 

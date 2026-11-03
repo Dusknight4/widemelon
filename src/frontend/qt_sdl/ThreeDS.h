@@ -25,7 +25,8 @@
 namespace ThreeDS
 {
 
-// files the 3DS core opens (by extension): .3ds .cci .cxi .3dsx .app .elf .axf
+// files the 3DS core opens (by extension): .3ds .cci .cxi .3dsx .app .elf .axf, and .cia, which is
+// installed into the virtual 3DS first (as on a 3DS), then its game started
 bool IsThreeDSFile(const std::string& path);
 
 // once, before anything else: where 3DS saves, the virtual SD card and NAND go
@@ -35,6 +36,12 @@ void Init(const std::string& userDir);
 std::string Load(const std::string& path);
 void Unload();
 bool Running();
+// starts the running game again from the beginning
+std::string Reset();
+
+// savestates (Azahar's, of the running game): false if it didn't work
+bool SaveState(const std::string& path);
+bool LoadState(const std::string& path);
 
 // what the player does this frame. Buttons: bits 0-11 as the DS's key mask (A, B, Select,
 // Start, Right, Left, Up, Down, R, L, X, Y), set = pressed; bit 12 ZL, 13 ZR, 14 Home.
