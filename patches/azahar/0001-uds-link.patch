@@ -1,0 +1,143 @@
+--- a/src/core/hle/service/nwm/nwm_uds.cpp
++++ b/src/core/hle/service/nwm/nwm_uds.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <algorithm>
+ #include <cstring>
++#include <mutex>
+ #include <boost/serialization/list.hpp>
+ #include <boost/serialization/map.hpp>
+ #include <cryptopp/osrng.h>
+@@ -25,6 +26,7 @@
+ #include "core/hle/service/nwm/uds_beacon.h"
+ #include "core/hle/service/nwm/uds_connection.h"
+ #include "core/hle/service/nwm/uds_data.h"
++#include "core/hle/service/nwm/uds_link.h"
+ #include "core/memory.h"
+ 
+ SERIALIZE_EXPORT_IMPL(Service::NWM::NWM_UDS)
+@@ -42,6 +44,38 @@
+     // wifi_packet_received set in constructor
+ }
+ 
++// MultiMelon: a frontend's transport instead of a room (uds_link.h). Two locks: sending can happen while
++// the service holds its own lock, and a frame delivered from the link takes that lock.
++namespace {
++std::mutex g_link_send_mutex;
++std::shared_ptr<UdsLink> g_link;
++std::mutex g_link_deliver_mutex;
++std::function<void(const Network::WifiPacket&)> g_link_deliver; // the running service's OnWifiPacketReceived
++std::function<bool()> g_link_active;
++
++std::shared_ptr<UdsLink> CurrentLink() {
++    std::scoped_lock lock{g_link_send_mutex};
++    return g_link;
++}
++} // namespace
++
++void SetUdsLink(std::shared_ptr<UdsLink> link) {
++    std::scoped_lock lock{g_link_send_mutex};
++    g_link = std::move(link);
++}
++
++void DeliverUdsPacket(const Network::WifiPacket& packet) {
++    std::scoped_lock lock{g_link_deliver_mutex};
++    if (g_link_deliver) {
++        g_link_deliver(packet);
++    }
++}
++
++bool UdsActive() {
++    std::scoped_lock lock{g_link_deliver_mutex};
++    return g_link_active && g_link_active();
++}
++
+ namespace ErrCodes {
+ enum {
+     NotInitialized = 2,
+@@ -79,6 +113,11 @@
+ 
+ /// Sends a WifiPacket to the room we're currently connected to.
+ void SendPacket(Network::WifiPacket& packet) {
++    if (auto link = CurrentLink()) {
++        packet.transmitter_address = link->mac;
++        link->send(packet);
++        return;
++    }
+     if (auto room_member = Network::GetRoomMember().lock()) {
+         if (room_member->GetState() == Network::RoomMember::State::Joined ||
+             room_member->GetState() == Network::RoomMember::State::Moderator) {
+@@ -1644,6 +1683,10 @@
+ Network::MacAddress NWM_UDS::GetMacAddress() {
+     MacAddress mac;
+ 
++    if (auto link = CurrentLink()) {
++        return link->mac;
++    }
++
+     if (auto room_member = Network::GetRoomMember().lock();
+         room_member && room_member->IsConnected()) {
+         mac = room_member->GetMacAddress();
+@@ -1731,15 +1774,25 @@
+ 
+     system.Kernel().GetSharedPageHandler().SetMacAddress(GetMacAddress());
+ 
++    {
++        std::scoped_lock lock{g_link_deliver_mutex};
++        g_link_deliver = [this](const Network::WifiPacket& packet) { OnWifiPacketReceived(packet); };
++        g_link_active = [this] { return initialized.load(); };
++    }
+     if (auto room_member = Network::GetRoomMember().lock()) {
+         wifi_packet_received = room_member->BindOnWifiPacketReceived(
+             [this](const Network::WifiPacket& packet) { OnWifiPacketReceived(packet); });
+-    } else {
++    } else if (!CurrentLink()) {
+         LOG_ERROR(Service_NWM, "Network isn't initalized");
+     }
+ }
+ 
+ NWM_UDS::~NWM_UDS() {
++    {
++        std::scoped_lock lock{g_link_deliver_mutex};
++        g_link_deliver = nullptr;
++        g_link_active = nullptr;
++    }
+     if (auto room_member = Network::GetRoomMember().lock())
+         room_member->Unbind(wifi_packet_received);
+ 
+--- /dev/null
++++ b/src/core/hle/service/nwm/uds_link.h
+@@ -0,0 +1,33 @@
++// Copyright 2026 WideMelon contributors
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++// MultiMelon: a frontend's own transport for the UDS service's 802.11 frames, in place of a room
++// (MultiMelon's "Wifi as Local Multiplayer": other MultiMelons and real 3DSes on the same network).
++
++#pragma once
++
++#include <functional>
++#include <memory>
++#include "network/room_member.h"
++
++namespace Service::NWM {
++
++struct UdsLink {
++    // a frame to send (its transmitter_address already this console's); mustn't block
++    std::function<void(const Network::WifiPacket&)> send;
++    // this console's MAC address on the link
++    Network::MacAddress mac{};
++};
++
++// From then on frames go through the link instead of a room (null: the room again). Set it before a game
++// starts: the console's MAC address is read when the UDS service starts.
++void SetUdsLink(std::shared_ptr<UdsLink> link);
++
++// A frame from the link, for this console (from any thread).
++void DeliverUdsPacket(const Network::WifiPacket& packet);
++
++// The game has the UDS service initialized (its local wireless is on).
++bool UdsActive();
++
++} // namespace Service::NWM

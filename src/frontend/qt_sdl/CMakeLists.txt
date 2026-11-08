@@ -246,11 +246,11 @@ if (MULTIMELON_3DS)
         message(FATAL_ERROR "MULTIMELON_3DS: no ${AZAHAR_LIBS_DIR}/azahar-libs.txt (run tools/azahar_libs.py)")
     endif()
 
-    target_sources(melonDS PRIVATE ThreeDS.cpp)
+    target_sources(melonDS PRIVATE ThreeDS.cpp ThreeDSNet.cpp UdsLink.cpp)
     target_compile_definitions(melonDS PRIVATE MULTIMELON_3DS)
     set(AZAHAR_EXT "${AZAHAR_SOURCE_DIR}/externals")
     # (as Azahar compiles its own code: its headers, definitions and C++20)
-    set_source_files_properties(ThreeDS.cpp PROPERTIES
+    set_source_files_properties(ThreeDS.cpp ThreeDSNet.cpp PROPERTIES
         INCLUDE_DIRECTORIES "${AZAHAR_BUILD_DIR}/src;${AZAHAR_SOURCE_DIR}/src;${AZAHAR_EXT}/boost;${AZAHAR_EXT}/fmt/include;${AZAHAR_EXT}/dynarmic/src;${AZAHAR_EXT}/microprofile;${AZAHAR_EXT}/dds-ktx;${AZAHAR_EXT}/glad/include"
         COMPILE_DEFINITIONS "BOOST_ALL_NO_LIB;BOOST_ASIO_DISABLE_CONCEPTS;BOOST_DATE_TIME_NO_LIB;BOOST_ERROR_CODE_HEADER_ONLY;BOOST_NO_CXX98_FUNCTION_BASE;BOOST_REGEX_NO_LIB;BOOST_SYSTEM_NO_LIB;CITRA_HAS_SSE42;ENABLE_OPENGL;ENABLE_SDL2;ENABLE_SOFTWARE_RENDERER;HAVE_CUBEB;MICROPROFILE_ENABLED=0;_FILE_OFFSET_BITS=64"
         COMPILE_OPTIONS "-std=gnu++20;-msse4.2")

@@ -64,6 +64,9 @@ unsigned CopyScreens();
 int TextureWidth();
 int TextureHeight();
 
+// at the end (after Unload): stops what Init started (Azahar's log thread, which mustn't outlive main)
+void Finish();
+
 // internal resolution (1 = the 3DS's own, 2 = twice it...); takes effect at the next Load()
 void SetResolution(int factor);
 

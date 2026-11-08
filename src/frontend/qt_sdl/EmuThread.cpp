@@ -93,6 +93,8 @@ static FILE* FrameLog()
 #ifdef MULTIMELON_3DS
 #include <QFileInfo>
 #include "ThreeDS.h"
+#include "ThreeDSNet.h"
+#include "UdsLink.h"
 #include "GLThread.h"
 #endif
 
@@ -593,6 +595,11 @@ void EmuThread::run()
 
         handleMessages();
     }
+#ifdef MULTIMELON_3DS
+    // (Azahar's log thread, if a 3DS game ran, stops before the program ends: at exit it threw)
+    stopThreeDS();
+    ThreeDS::Finish();
+#endif
 }
 
 void EmuThread::sendMessage(Message msg)
@@ -970,6 +977,19 @@ bool EmuThread::bootThreeDS(const QString& path, QString& error)
     emuInstance->makeCurrentGL();
     ThreeDS::Init((emuDirectory + "/3ds").toStdString());
     ThreeDS::SetResolution(std::clamp(emuInstance->getGlobalConfig().GetInt("3D.GL.ScaleFactor"), 1, 10));
+    // "Wifi as Local Multiplayer": the game's local wireless over the network, with other MultiMelons
+    // and real 3DSes (UdsLink.h). (Tests: MULTIMELON_3DS_LINK_PORT, _PEERS "ip:port,...", _LOOPBACK=1)
+    if (Config::GetGlobalTable().GetBool("MP.DSBridge"))
+    {
+        const char* port = std::getenv("MULTIMELON_3DS_LINK_PORT");
+        const char* peers = std::getenv("MULTIMELON_3DS_LINK_PEERS");
+        const char* loop = std::getenv("MULTIMELON_3DS_LINK_LOOPBACK");
+        if (!ThreeDSNet::Start((emuDirectory + "/3ds").toStdString(), port ? (uint16_t)std::atoi(port) : 7072,
+                               peers ? peers : "", loop && loop[0] == '1'))
+            emuInstance->osdAddMessage(0xFFA0A0, "Wifi as Local Multiplayer: the network port is in use");
+    }
+    else
+        ThreeDSNet::Stop();
     const std::string err = ThreeDS::Load(path.toStdString());
     if (!err.empty())
     {
@@ -992,6 +1012,7 @@ void EmuThread::stopThreeDS()
     if (!emuInstance->threeDSActive) return;
     if (useOpenGL) emuInstance->makeCurrentGL();
     ThreeDS::Unload();
+    ThreeDSNet::Stop();
     emuInstance->threeDSActive = false;
 }
 
@@ -1073,7 +1094,10 @@ void EmuThread::runThreeDSFrame()
     {
         char title[100];
         const char* speedText = threeDSSlow ? ", slow motion" : threeDSFast ? ", fast forward" : !emuInstance->doLimitFPS ? ", unlimited" : "";
-        snprintf(title, sizeof(title), "[%.0f] MultiMelon " WIDEMELON_VERSION " (3DS%s)", threeDSFrames / (now - threeDSMeasureTime), speedText);
+        char linkText[48] = "";
+        if (UdsLink::Running())
+            snprintf(linkText, sizeof(linkText), ", %d nearby", UdsLink::GetStats().peers);
+        snprintf(title, sizeof(title), "[%.0f] MultiMelon " WIDEMELON_VERSION " (3DS%s%s)", threeDSFrames / (now - threeDSMeasureTime), speedText, linkText);
         changeWindowTitle(title);
         threeDSFrames = 0;
         threeDSMeasureTime = now;

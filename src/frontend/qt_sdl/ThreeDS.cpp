@@ -298,6 +298,12 @@ void Init(const std::string& userDir)
     ::Input::RegisterFactory<::Input::AnalogDevice>("multimelon", std::make_shared<StickFactory>());
 }
 
+void Finish()
+{
+    Unload();
+    Common::Log::Stop();
+}
+
 void SetResolution(int factor) { g_resolution = std::clamp(factor, 1, 10); }
 
 void SetSpeed(double percent)
