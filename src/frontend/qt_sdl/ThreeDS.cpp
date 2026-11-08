@@ -300,6 +300,19 @@ void Init(const std::string& userDir)
 
 void SetResolution(int factor) { g_resolution = std::clamp(factor, 1, 10); }
 
+void SetSpeed(double percent)
+{
+    // (Azahar's frame limiter reads this each frame: its own turbo setting)
+    Settings::is_temporary_frame_limit = percent != 100.0;
+    Settings::temporary_frame_limit = std::max(percent, 0.0);
+}
+
+void SetAudio(float volume, bool muted)
+{
+    Settings::values.volume = std::clamp(volume, 0.f, 1.f);
+    Settings::values.audio_muted = muted;
+}
+
 std::string Load(const std::string& path)
 {
     Unload();

@@ -123,6 +123,7 @@ public:
     void runThreeDSFrame();
     unsigned threeDSFrames = 0;
     double threeDSMeasureTime = 0.0;
+    bool threeDSFast = false, threeDSSlow = false;
 #endif
     int bootFirmware(QString& errorstr);
     int insertCart(const QStringList& filename, bool gba, QString& errorstr);

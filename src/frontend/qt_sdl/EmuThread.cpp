@@ -1038,6 +1038,27 @@ void EmuThread::runThreeDSFrame()
     in.touchX = emuInstance->touchX * (320.f / 256.f);
     in.touchY = emuInstance->touchY * (240.f / 192.f);
 
+    // the frame-rate hotkeys and settings, as for a DS game: fast forward and slow motion (held or
+    // toggled, at the speeds set in the emulator settings), the frame limiter, muting and the volume
+    if (emuInstance->hotkeyPressed(HK_FastForwardToggle)) emuInstance->fastForwardToggled = !emuInstance->fastForwardToggled;
+    if (emuInstance->hotkeyPressed(HK_SlowMoToggle)) emuInstance->slowmoToggled = !emuInstance->slowmoToggled;
+    if (emuInstance->hotkeyPressed(HK_AudioMuteToggle)) emuInstance->toggleAudioMute();
+    const bool fast = emuInstance->hotkeyDown(HK_FastForward) || emuInstance->fastForwardToggled;
+    const bool slow = emuInstance->hotkeyDown(HK_SlowMo) || emuInstance->slowmoToggled;
+    if ((fast || slow) != (threeDSFast || threeDSSlow))
+        emuInstance->setVSyncGL(!(fast || slow));     // (vsync would hold fast forward to the display's rate)
+    threeDSFast = fast;
+    threeDSSlow = slow;
+    emuInstance->updateFastForwardMute(fast);
+    const double target = emuInstance->targetFPS > 0.0 ? emuInstance->targetFPS : 60.0;
+    double speed = 100.0;
+    if (slow) speed = 100.0 * emuInstance->slowmoFPS / target;
+    else if (fast) speed = emuInstance->fastForwardFPS >= 1000.0 ? 0.0 : 100.0 * emuInstance->fastForwardFPS / target;
+    else if (!emuInstance->doLimitFPS) speed = 0.0;
+    ThreeDS::SetSpeed(speed);
+    ThreeDS::SetAudio(emuInstance->audioVolume / 256.f,
+                      emuInstance->audioMutedToggle || emuInstance->audioMutedByWindowFocus || emuInstance->audioMutedByFastForward);
+
     ThreeDS::RunFrame(in);
     if (!ThreeDS::Running())
     {
@@ -1051,7 +1072,8 @@ void EmuThread::runThreeDSFrame()
     if (now - threeDSMeasureTime >= 1.0)
     {
         char title[100];
-        snprintf(title, sizeof(title), "[%.0f] MultiMelon " WIDEMELON_VERSION " (3DS)", threeDSFrames / (now - threeDSMeasureTime));
+        const char* speedText = threeDSSlow ? ", slow motion" : threeDSFast ? ", fast forward" : !emuInstance->doLimitFPS ? ", unlimited" : "";
+        snprintf(title, sizeof(title), "[%.0f] MultiMelon " WIDEMELON_VERSION " (3DS%s)", threeDSFrames / (now - threeDSMeasureTime), speedText);
         changeWindowTitle(title);
         threeDSFrames = 0;
         threeDSMeasureTime = now;

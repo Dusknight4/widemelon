@@ -67,4 +67,9 @@ int TextureHeight();
 // internal resolution (1 = the 3DS's own, 2 = twice it...); takes effect at the next Load()
 void SetResolution(int factor);
 
+// speed in percent of the 3DS's own (100 = normal, 0 = as fast as it goes), and the sound: volume
+// 0..1, muted or not (from the frontend's fast forward, slow motion, frame limiter, mute and volume)
+void SetSpeed(double percent);
+void SetAudio(float volume, bool muted);
+
 }
