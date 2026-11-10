@@ -18,3 +18,10 @@
   plus libcwav (github.com/PabloMK7/libcwav, with libncsnd) in Library/libcwav; build those, then the library with
   `make DEFINES=...` giving the version and `-Wno-error=unused-but-set-variable` (newer devkitARM GCC). Then `make`
   here (devkitPro's bash). In Azahar (rig3ds: RIG_PLUGIN=...3gx) it loads into any application as default.3gx.
+- `core/`: uds_core, the 3DS local wireless service (nwm::UDS) as portable C++: a port of Azahar's (2126.2), so
+  the same code serves a game on a real 3DS (the plugin) and talks to MultiMelon's 3DS core. `uds_crypto` is
+  its AES-CTR/MD5/SHA-1. `fake3ds.cpp` (`build.sh`) is a "3DS" on the PC: uds_core over UdsLink, driven like
+  udstest, so it plays either side against rig3ds running udstest.3dsx:
+
+      fake3ds 7702 127.0.0.1:7701 join      # (rig3ds on 7701 hosting)
+      fake3ds 7702 127.0.0.1:7701 host      # (then rig3ds on 7701 joins)
