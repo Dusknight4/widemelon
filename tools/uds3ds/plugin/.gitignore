@@ -1,0 +1,4 @@
+release/
+debug/
+*.elf
+*.3gx

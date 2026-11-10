@@ -1,0 +1,21 @@
+Author: MultiMelon
+
+Version:
+    Major: 0
+    Minor: 1
+    Revision: 0
+
+Targets: # all games (the MultiMelon launcher picks which game loads it)
+    - 0
+
+Title: MultiMelon Wifi
+
+Summary: 3DS local wireless over WiFi, with MultiMelon and other 3DSes
+
+Description: |
+  Carries the game's local wireless (UDS) over your WiFi network,
+  so it plays with MultiMelon on a PC and with other 3DSes.
+
+Compatibility: Any
+
+MemorySize: 2MiB

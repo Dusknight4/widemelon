@@ -5,7 +5,9 @@
 // usage: rig3ds USERDIR TITLE SECONDS [KEYS]
 //   USERDIR  this console's 3DS folder (its sdmc/, nand/, log/ and mac.txt)
 //   KEYS     optional input script for the title: "keys*frames,..." (a b x y l r start select up down left right)
-// env: RIG_LINK_PORT (default 7072), RIG_LINK_PEERS ("ip:port,..."), RIG_LINK_LOOPBACK=1, RIG_NO_LINK=1
+// env: RIG_LINK_PORT (default 7072), RIG_LINK_PEERS ("ip:port,..."), RIG_LINK_LOOPBACK=1, RIG_NO_LINK=1,
+//      RIG_PLUGIN=file.3gx (Azahar's Luma plugin loader on, that plugin as sdmc:/luma/plugins/default.3gx)
+// A .cia TITLE is installed first (once is enough: RIG_NO_INSTALL=1 then starts the installed game).
 
 #include <chrono>
 #include <cstdio>
@@ -22,7 +24,11 @@
 #include "core/frontend/emu_window.h"
 #include "core/frontend/image_interface.h"
 #include "core/frontend/input.h"
+#include "core/hle/service/am/am.h"
+#include "core/loader/loader.h"
 #include "core/hle/service/service.h"
+#include "core/file_sys/cia_container.h"
+#include "core/file_sys/title_metadata.h"
 
 #include "ThreeDSNet.h"
 #include "UdsLink.h"
@@ -135,9 +141,32 @@ int main(int argc, char** argv)
         }
     }
 
+    if (const char* plugin = std::getenv("RIG_PLUGIN"))
+    {
+        Settings::values.plugin_loader_enabled = true;
+        FileUtil::CreateFullPath(dir + "sdmc/luma/plugins/");
+        FileUtil::Copy(plugin, dir + "sdmc/luma/plugins/default.3gx");
+    }
+
+    std::string game = title;
+    if (game.size() > 4 && game.substr(game.size() - 4) == ".cia")
+    {
+        u64 tid = 0;
+        {
+            FileUtil::IOFile f(game, "rb");
+            FileSys::CIAContainer cia;
+            if (!f.IsOpen() || cia.Load(&f) != Loader::ResultStatus::Success) { std::printf("bad cia\n"); return 1; }
+            tid = cia.GetTitleMetadata().GetTitleID();
+        }
+        if (!std::getenv("RIG_NO_INSTALL"))
+            std::printf("install: %d\n", (int)Service::AM::InstallCIA(game));
+        game = Service::AM::GetTitleContentPath(Service::AM::GetTitleMediaType(tid), tid);
+        std::printf("title %016llX: %s\n", (unsigned long long)tid, game.c_str());
+    }
+
     Window window;
     system.ApplySettings();
-    const auto result = system.Load(window, title);
+    const auto result = system.Load(window, game);
     std::printf("load: %d\n", (int)result);
     if (result != Core::System::ResultStatus::Success) return 1;
 
