@@ -29,6 +29,10 @@ static void say(const char* fmt, ...)
 
 #define MAGIC 0x55445354    // "UDST"
 
+// fixed heaps (libctru otherwise takes all the free memory, which fails beside a Luma plugin in Azahar)
+u32 __ctru_heap_size = 0x800000;
+u32 __ctru_linear_heap_size = 0x400000;
+
 int main(void)
 {
 	gfxInitDefault();

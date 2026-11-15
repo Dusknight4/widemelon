@@ -15,9 +15,10 @@ CTRPFLIB	?=	/c/wmbuild/ext/ctrpf/ctrpluginframework-0.8.0/Library
 TARGET		:= 	MultiMelonWifi
 INCLUDES	:= 	Includes \
 				Includes/lodepng \
-				../Library/include
+				../Library/include \
+				../core
 
-SOURCES 	:= 	Sources
+SOURCES 	:= 	Sources ../core
 
 PSF 		:= 	MultiMelon.plgInfo
 PYTHON		?=	/c/msys64/ucrt64/bin/python3.exe
@@ -35,7 +36,7 @@ CFLAGS		+=	$(INCLUDE) -D__3DS__ $(DEFINES)
 
 #-Wall -Wextra -Wdouble-promotion -Werror
 
-CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
+CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17 -Wno-psabi
 
 ASFLAGS		:= $(ARCH) $(G)
 LDFLAGS		:= -T $(TOPDIR)/3gx.ld $(ARCH) -Os -Wl,$(WL)--gc-sections,--section-start,.text=0x07000100 #-specs=3dsx.specs
@@ -55,7 +56,7 @@ export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
 CFILES			:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
-CPPFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+CPPFILES		:=	$(filter-out fake3ds.cpp,$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp))))
 SFILES			:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 
 export LD 		:= 	$(CXX)

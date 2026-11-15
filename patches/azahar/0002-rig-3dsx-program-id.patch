@@ -1,0 +1,20 @@
+--- a/src/core/loader/3dsx.cpp
++++ b/src/core/loader/3dsx.cpp
+@@ -3,6 +3,7 @@
+ // Refer to the license.txt file included.
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <vector>
+ #include "common/file_derived.h"
+ #include "common/file_util.h"
+@@ -287,6 +288,9 @@
+     if (Load3DSXFile(system, file.get(), Memory::PROCESS_IMAGE_VADDR, &codeset) != ERROR_NONE)
+         return ResultStatus::Error;
+     codeset->name = filename;
++    // (MultiMelon's test rig: an application title id, so the plugin loader treats this 3dsx as a game)
++    if (const char* tid = std::getenv("AZAHAR_3DSX_PROGRAM_ID"))
++        codeset->program_id = std::strtoull(tid, nullptr, 16);
+ 
+     process = system.Kernel().CreateProcess(std::move(codeset));
+     process->Set3dsxKernelCaps();

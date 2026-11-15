@@ -137,7 +137,7 @@ def main():
     memsize = {"5mib": 0, "2mib": 1, "10mib": 2}.get((st.get("MemorySize") or "5mib").lower(), 0)
     truthy = lambda k: (st.get(k) or "").lower() == "true"
     flags = 1 | 2 | (memsize << 2) | (compat << 4) | (truthy("EventsSelfManaged") << 6) | (truthy("SwapNotNeeded") << 7) \
-        | (truthy("UsePrivateMemory") << 8)
+        | (truthy("UsePrivateMemory") << 8) | (truthy("AllowHomebrewLoad") << 9)
     targets = [int(x, 0) for x in (st.get("Targets") or [])]
     if targets and targets[0] == 0:
         targets = []
