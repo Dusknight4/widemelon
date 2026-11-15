@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -286,6 +287,10 @@ void Init(const std::string& userDir)
     std::string dir = userDir;
     if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
     FileUtil::SetUserPath(dir);
+    // the log takes the game's own debug output too (svcOutputDebugString: Debug.Emulated, at debug level), for
+    // modders reading their test builds; MULTIMELON_3DS_LOG_FILTER replaces the filter (Azahar's syntax)
+    const char* filter = std::getenv("MULTIMELON_3DS_LOG_FILTER");
+    Settings::values.log_filter.SetValue(filter ? filter : "*:Info Debug.Emulated:Debug");
     Common::Log::Initialize();   // (its log folder, in the user folder: log/azahar_log.txt)
     Common::Log::Start();
 

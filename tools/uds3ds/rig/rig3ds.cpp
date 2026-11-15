@@ -14,6 +14,7 @@
 //      RIG_SHOTS=folder (where shots go; default USERDIR/shots), RIG_SHOT_EVERY=seconds (shots by themselves)
 // A .cia TITLE is installed first (once is enough: RIG_NO_INSTALL=1 then starts the installed game).
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -207,11 +208,15 @@ int main(int argc, char** argv)
     if (argc > 4) ParseKeys(argv[4], steps);
     const char* cmdFile = std::getenv("RIG_CMD");
     std::string shotDir = std::getenv("RIG_SHOTS") ? std::getenv("RIG_SHOTS") : dir + "shots";
-    if (shotDir.back() != '/' && shotDir.back() != '\\') shotDir += '/';
+    std::replace(shotDir.begin(), shotDir.end(), '\\', '/');    // (Azahar's CreateFullPath splits on / only)
+    if (shotDir.back() != '/') shotDir += '/';
     const double shotEvery = std::getenv("RIG_SHOT_EVERY") ? std::atof(std::getenv("RIG_SHOT_EVERY")) : 0.0;
     FileUtil::CreateFullPath(shotDir);
 
     FileUtil::SetUserPath(dir);
+    // as MultiMelon: the game's own debug output (svcOutputDebugString) in the log too; RIG_LOG_FILTER replaces it
+    Settings::values.log_filter.SetValue(std::getenv("RIG_LOG_FILTER") ? std::getenv("RIG_LOG_FILTER")
+                                                                       : "*:Info Debug.Emulated:Debug");
     Common::Log::Initialize();
     Common::Log::Start();
     for (const auto& module : Service::service_module_map)

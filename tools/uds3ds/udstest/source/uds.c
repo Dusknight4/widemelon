@@ -25,6 +25,12 @@ static void say(const char* fmt, ...)
 		va_end(a);
 		fflush(g_log);
 	}
+	// and to the debugger (an emulator's log: Azahar's Debug.Emulated), as a game's test build logs
+	char line[256];
+	va_start(a, fmt);
+	const int n = vsnprintf(line, sizeof(line), fmt, a);
+	va_end(a);
+	if (n > 0) svcOutputDebugString(line, n < (int)sizeof(line) ? n : (int)sizeof(line) - 1);
 }
 
 #define MAGIC 0x55445354    // "UDST"
