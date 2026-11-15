@@ -15,6 +15,7 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -43,9 +44,11 @@ struct Peer
 {
     sockaddr_in addr {};
     double lastHeardMs = 0.0;
+    uint32_t session = 0;   // (from its hellos; 0: not heard yet)
 };
 
 Socket g_sock = kNoSocket;
+uint16_t g_boundPort = 0;
 std::thread g_thread;
 std::atomic<bool> g_run {false};
 Config g_config;
@@ -100,16 +103,25 @@ std::vector<sockaddr_in> ParseTargets(const std::string& list)
 std::vector<sockaddr_in> BroadcastTargets()
 {
     std::vector<sockaddr_in> to = g_helloTo;
-    if (!g_helloTo.empty() || g_config.loopback) return to;
+    if (!g_helloTo.empty()) return to;
+    // (each address on every port of the range: other MultiMelons on a PC take the next ports)
     auto add = [&](uint32_t a)
     {
-        for (const sockaddr_in& t : to) if (t.sin_addr.s_addr == a) return;
-        sockaddr_in t {};
-        t.sin_family = AF_INET;
-        t.sin_port = htons(g_config.port);
-        t.sin_addr.s_addr = a;
-        to.push_back(t);
+        for (int i = 0; i < std::max(g_config.ports, 1); i++)
+        {
+            const uint16_t port = htons((uint16_t)(g_config.port + i));
+            bool known = false;
+            for (const sockaddr_in& t : to) known |= t.sin_addr.s_addr == a && t.sin_port == port;
+            if (known) continue;
+            sockaddr_in t {};
+            t.sin_family = AF_INET;
+            t.sin_port = port;
+            t.sin_addr.s_addr = a;
+            to.push_back(t);
+        }
     };
+    if (g_config.ports > 1) add(htonl(INADDR_LOOPBACK));     // (MultiMelons on this PC)
+    if (g_config.loopback) return to;                       // (tests: this PC only)
     add(htonl(INADDR_BROADCAST));
 #ifdef _WIN32
     INTERFACE_INFO list[32];
@@ -157,12 +169,22 @@ void HelloRound(bool awake)
     for (const sockaddr_in& t : to) SendTo(hello, sizeof(hello), t);
 }
 
-void Heard(const Mac& mac, const sockaddr_in& from)
+// true: that console was known under another session (it has restarted: its old self is gone)
+bool Heard(const Mac& mac, const sockaddr_in& from, uint32_t session = 0)
 {
     std::lock_guard l(g_peerLock);
     Peer& p = g_peers[mac];
     p.addr = from;
     p.lastHeardMs = NowMs();
+    if (!session) return false;
+    const bool restarted = p.session && p.session != session;
+    p.session = session;
+    return restarted;
+}
+
+void Lost(const Mac& mac)
+{
+    if (g_config.peerLost) g_config.peerLost(mac.data());
 }
 
 void Receive(const uint8_t* msg, size_t len, const sockaddr_in& from)
@@ -175,7 +197,7 @@ void Receive(const uint8_t* msg, size_t len, const sockaddr_in& from)
         if (session == g_session || std::memcmp(msg + 6, g_config.mac, 6) == 0) return;   // (our own echo)
         Mac mac;
         std::memcpy(mac.data(), msg + 6, 6);
-        Heard(mac, from);
+        if (Heard(mac, from, session)) Lost(mac);
     }
     else if (msg[5] == 1 && len >= kHeader)
     {
@@ -204,9 +226,21 @@ void Run()
         {
             nextHello = now + 1000.0;
             if (now < awakeUntil) HelloRound(true);
-            std::lock_guard l(g_peerLock);
-            for (auto it = g_peers.begin(); it != g_peers.end();)
-                it = (now - it->second.lastHeardMs > kPeerTimeoutMs) ? g_peers.erase(it) : std::next(it);
+            std::vector<Mac> gone;
+            {
+                std::lock_guard l(g_peerLock);
+                for (auto it = g_peers.begin(); it != g_peers.end();)
+                {
+                    if (now - it->second.lastHeardMs > kPeerTimeoutMs)
+                    {
+                        gone.push_back(it->first);
+                        it = g_peers.erase(it);
+                    }
+                    else
+                        ++it;
+                }
+            }
+            for (const Mac& m : gone) Lost(m);
         }
 
         fd_set set;
@@ -240,21 +274,29 @@ bool Start(const Config& config, FrameFn onFrame, std::function<bool()> awake)
         g_peers.clear();
     }
 
-    const auto s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (s == (decltype(s))-1) return false;
-    g_sock = (Socket)s;
-    int yes = 1;
-    setsockopt((int)g_sock, SOL_SOCKET, SO_BROADCAST, (const char*)&yes, sizeof(yes));
-    sockaddr_in addr {};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(config.port);
-    addr.sin_addr.s_addr = htonl(config.loopback ? INADDR_LOOPBACK : INADDR_ANY);
-    if (bind((int)g_sock, (const sockaddr*)&addr, sizeof(addr)) != 0)
+    // the first free port of the range (another MultiMelon on this PC may have the first)
+    for (int i = 0; i < std::max(config.ports, 1) && g_sock == kNoSocket; i++)
     {
-        CloseSocket(g_sock);
-        g_sock = kNoSocket;
-        return false;
+        const auto s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s == (decltype(s))-1) return false;
+        int yes = 1;
+#ifdef _WIN32
+        setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&yes, sizeof(yes));   // (no sharing a port)
+#endif
+        setsockopt(s, SOL_SOCKET, SO_BROADCAST, (const char*)&yes, sizeof(yes));
+        sockaddr_in addr {};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons((uint16_t)(config.port + i));
+        addr.sin_addr.s_addr = htonl(config.loopback ? INADDR_LOOPBACK : INADDR_ANY);
+        if (bind(s, (const sockaddr*)&addr, sizeof(addr)) == 0)
+        {
+            g_sock = (Socket)s;
+            g_boundPort = (uint16_t)(config.port + i);
+        }
+        else
+            CloseSocket((Socket)s);
     }
+    if (g_sock == kNoSocket) return false;
     g_run = true;
     g_thread = std::thread(Run);
     return true;
@@ -267,7 +309,10 @@ void Stop()
     if (g_thread.joinable()) g_thread.join();
     CloseSocket(g_sock);
     g_sock = kNoSocket;
+    g_boundPort = 0;
 }
+
+uint16_t BoundPort() { return g_run ? g_boundPort : 0; }
 
 bool Running() { return g_run; }
 

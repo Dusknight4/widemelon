@@ -58,6 +58,8 @@ bool createEmuInstance();
 void deleteEmuInstance(int id);
 void deleteAllEmuInstances(int first = 0);
 int numEmuInstances();
+// MultiMelon: another window of this MultiMelon runs a 3DS game (Azahar's core is one per program)
+bool threeDSRunningElsewhere(int instanceID);
 
 void broadcastInstanceCommand(int cmd, QVariant& param, int sourceinst);
 

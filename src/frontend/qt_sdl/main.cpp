@@ -140,6 +140,13 @@ bool createEmuInstance()
     return true;
 }
 
+bool threeDSRunningElsewhere(int instanceID)
+{
+    for (int i = 0; i < kMaxEmuInstances; i++)
+        if (i != instanceID && emuInstances[i] && emuInstances[i]->threeDSActive) return true;
+    return false;
+}
+
 void deleteEmuInstance(int id)
 {
     auto inst = emuInstances[id];

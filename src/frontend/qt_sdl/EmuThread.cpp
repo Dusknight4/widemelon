@@ -91,7 +91,9 @@ static FILE* FrameLog()
 #include "PhoneBridge.h"
 #include "main.h"
 #ifdef MULTIMELON_3DS
+#include <QDir>
 #include <QFileInfo>
+#include <QLockFile>
 #include "ThreeDS.h"
 #include "ThreeDSNet.h"
 #include "UdsLink.h"
@@ -962,11 +964,49 @@ bool EmuThread::emuIsActive()
 }
 
 #ifdef MULTIMELON_3DS
+// This MultiMelon's 3DS folder (saves, virtual SD card and NAND, MAC address): base for the first copy of
+// MultiMelon running on this PC, base-2, base-3... for others running at the same time (each a console
+// of its own, as two players need). Held with a lock file until MultiMelon ends.
+static QString ClaimThreeDSDir(const QString& base, int& slot)
+{
+    static std::unique_ptr<QLockFile> lock;
+    static QString claimed;
+    static int claimedSlot = 0;
+    if (lock)
+    {
+        slot = claimedSlot;
+        return claimed;
+    }
+    for (int i = 0; i < 8; i++)
+    {
+        const QString dir = i == 0 ? base : QString("%1-%2").arg(base).arg(i + 1);
+        QDir().mkpath(dir);
+        auto l = std::make_unique<QLockFile>(dir + "/multimelon.lock");
+        l->setStaleLockTime(0);     // (a lock left by a MultiMelon that has ended is taken over all the same)
+        if (l->tryLock(0))
+        {
+            lock = std::move(l);
+            claimed = dir;
+            claimedSlot = slot = i;
+            return dir;
+        }
+    }
+    slot = 0;
+    return base;
+}
+
 bool EmuThread::bootThreeDS(const QString& path, QString& error)
 {
     if (!useOpenGL)
     {
         error = "3DS games need the OpenGL display (Config > Video settings: an OpenGL renderer).";
+        return false;
+    }
+    if (threeDSRunningElsewhere(emuInstance->instanceID))
+    {
+        // (Azahar's core is one per program)
+        error = "A 3DS game is already running in another window of this MultiMelon. For a second player, "
+                "start another copy of MultiMelon.";
         return false;
     }
     stopThreeDS();
@@ -975,21 +1015,27 @@ bool EmuThread::bootThreeDS(const QString& path, QString& error)
     // thread (GLThread) stays off while a 3DS game runs
     melonDS::GLThread::Stop();
     emuInstance->makeCurrentGL();
-    ThreeDS::Init((emuDirectory + "/3ds").toStdString());
+    int slot = 0;
+    const std::string userDir = ClaimThreeDSDir(emuDirectory + "/3ds", slot).toStdString();
+    ThreeDS::Init(userDir);
     ThreeDS::SetResolution(std::clamp(emuInstance->getGlobalConfig().GetInt("3D.GL.ScaleFactor"), 1, 10));
     // "Wifi as Local Multiplayer": the game's local wireless over the network, with other MultiMelons
-    // and real 3DSes (UdsLink.h). (Tests: MULTIMELON_3DS_LINK_PORT, _PEERS "ip:port,...", _LOOPBACK=1)
+    // and real 3DSes (UdsLink.h). Other MultiMelons on this PC take the next ports of 7072-7075.
+    // (Tests: MULTIMELON_3DS_LINK_PORT, _PEERS "ip:port,...", _LOOPBACK=1)
     if (Config::GetGlobalTable().GetBool("MP.DSBridge"))
     {
         const char* port = std::getenv("MULTIMELON_3DS_LINK_PORT");
         const char* peers = std::getenv("MULTIMELON_3DS_LINK_PEERS");
         const char* loop = std::getenv("MULTIMELON_3DS_LINK_LOOPBACK");
-        if (!ThreeDSNet::Start((emuDirectory + "/3ds").toStdString(), port ? (uint16_t)std::atoi(port) : 7072,
-                               peers ? peers : "", loop && loop[0] == '1'))
-            emuInstance->osdAddMessage(0xFFA0A0, "Wifi as Local Multiplayer: the network port is in use");
+        if (!ThreeDSNet::Start(userDir, port ? (uint16_t)std::atoi(port) : 7072, peers ? peers : "",
+                               loop && loop[0] == '1', port ? 1 : 4))
+            emuInstance->osdAddMessage(0xFFA0A0, "Wifi as Local Multiplayer: no network port free (7072-7075)");
     }
     else
         ThreeDSNet::Stop();
+    if (slot > 0)
+        emuInstance->osdAddMessage(0xA0D0FF, "3DS: copy %d of MultiMelon on this PC: its own 3DS folder (3ds-%d), own saves",
+                                   slot + 1, slot + 1);
     const std::string err = ThreeDS::Load(path.toStdString());
     if (!err.empty())
     {

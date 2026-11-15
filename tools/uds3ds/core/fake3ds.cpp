@@ -169,6 +169,14 @@ int main(int argc, char** argv)
 
     std::mt19937 rng((unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
     Mac mac = {0x40, 0xF4, 0x07, (u8)rng(), (u8)rng(), (u8)rng()};
+    if (const char* m = std::getenv("FAKE_MAC"))     // (tests: a fixed MAC, as a console restarted)
+    {
+        unsigned v[6];
+        if (std::sscanf(m, "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6)
+            for (int i = 0; i < 6; i++) mac[i] = (u8)v[i];
+    }
+    const u64 seconds = std::getenv("FAKE_SECONDS") ? (u64)std::atoi(std::getenv("FAKE_SECONDS")) : 20;
+    const bool vanish = std::getenv("FAKE_VANISH") != nullptr;  // (tests: gone without a word, as a console switched off)
     LinkHost host;
     Service uds(host, mac);
 
@@ -254,7 +262,7 @@ int main(int argc, char** argv)
         u16 lastFrom = 0;
         const u64 start = NowMs();
         u64 nextFrame = start;
-        for (int frame = 1; NowMs() - start < 20000; frame++)
+        for (int frame = 1; NowMs() - start < seconds * 1000; frame++)
         {
             nextFrame += 1000 / 60;
             while (NowMs() < nextFrame) SleepMs(1);
@@ -294,6 +302,12 @@ int main(int argc, char** argv)
             }
         std::printf(received > 0 ? "RESULT PASS\n" : "RESULT FAIL\n");
         exitCode = received > 0 ? 0 : 1;
+        if (vanish)
+        {
+            std::printf("(vanishing: no disconnect, no goodbye)\n");
+            std::fflush(stdout);
+            std::_Exit(exitCode);
+        }
         if (isHost) uds.DestroyNetwork();
         else uds.DisconnectNetwork();
         uds.Unbind(kBindId);

@@ -5,6 +5,7 @@
 #include "ThreeDSNet.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <random>
 
@@ -44,7 +45,7 @@ Network::MacAddress LoadMac(const std::string& userDir)
 }
 }
 
-bool Start(const std::string& userDir, uint16_t port, const std::string& helloTo, bool loopback)
+bool Start(const std::string& userDir, uint16_t port, const std::string& helloTo, bool loopback, int ports)
 {
     Stop();
     auto link = std::make_shared<Service::NWM::UdsLink>();
@@ -58,6 +59,17 @@ bool Start(const std::string& userDir, uint16_t port, const std::string& helloTo
     std::copy(link->mac.begin(), link->mac.end(), config.mac);
     config.helloTo = helloTo;
     config.loopback = loopback;
+    config.ports = ports;
+    // a console gone from the link leaves this console's network (tests: MULTIMELON_3DS_NO_DROP=1 leaves it
+    // in, as Azahar itself does)
+    if (!std::getenv("MULTIMELON_3DS_NO_DROP"))
+    {
+        config.peerLost = [](const uint8_t m[6]) {
+            Network::MacAddress mac;
+            std::copy(m, m + 6, mac.begin());
+            Service::NWM::DropUdsPeer(mac);
+        };
+    }
     const bool ok = UdsLink::Start(
         config,
         [](const uint8_t src[6], const uint8_t dst[6], uint8_t type, uint8_t channel, const uint8_t* data, size_t len) {
@@ -79,5 +91,7 @@ void Stop()
     UdsLink::Stop();
     Service::NWM::SetUdsLink(nullptr);
 }
+
+uint16_t Port() { return UdsLink::BoundPort(); }
 
 }

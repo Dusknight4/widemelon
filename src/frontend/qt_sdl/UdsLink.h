@@ -24,10 +24,16 @@ namespace UdsLink
 struct Config
 {
     uint16_t port = 7072;
+    // ports port .. port + ports - 1: the first free one is ours (another MultiMelon on this PC has the
+    // first), and hellos go to all of them, by broadcast and on this PC (127.0.0.1)
+    int ports = 1;
     uint8_t mac[6] {};
     // (tests) "ip:port[,ip:port...]": hellos go there instead of by broadcast
     std::string helloTo;
     bool loopback = false;      // (tests) bind to 127.0.0.1 only
+    // a console has gone: quiet for 15 s, or back as a new session (restarted). Called on the link's
+    // thread, with no lock held.
+    std::function<void(const uint8_t mac[6])> peerLost;
 };
 
 using FrameFn = std::function<void(const uint8_t src[6], const uint8_t dst[6], uint8_t type, uint8_t channel,
@@ -38,6 +44,8 @@ using FrameFn = std::function<void(const uint8_t src[6], const uint8_t dst[6], u
 bool Start(const Config& config, FrameFn onFrame, std::function<bool()> awake);
 void Stop();
 bool Running();
+// the port it got (0: not running)
+uint16_t BoundPort();
 
 // A frame to the console with that MAC (FF:FF:FF:FF:FF:FF: everyone). Doesn't block.
 void Send(const uint8_t dst[6], uint8_t type, uint8_t channel, const uint8_t* data, size_t len);
