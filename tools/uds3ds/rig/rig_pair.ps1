@@ -11,6 +11,10 @@
            and starts them. -Consoles 3 or 4 adds C and D. Console A listens on port 7701, B on 7702, C 7703,
            D 7704. -SaveB / -SaveC / -SaveD give that console another save than -Save.
            -Speed: percent of a 3DS's speed (default 100; 0 = as fast as the PC can).
+           A rough link, as real wireless can be (each console, on what it sends; default all off):
+           -Loss percent of datagrams lost, -Burst how many datagrams a loss burst lasts on average (default 1),
+           -Delay and -Jitter ms each frame arrives late (delay + 0..jitter, in order unless -Reorder),
+           -Dup percent of frames sent twice, -Seed for the dice. rig_cmd.ps1 -Link changes it while running.
   -Status  the last progress line of each console (frames run and frames a second, consoles heard, frames
            sent/received).
   -Down    quits them all.
@@ -39,6 +43,13 @@ param(
     [ValidateRange(2, 4)][int]$Consoles = 2,
     [switch]$Software,
     [ValidateRange(0, 1000)][int]$Speed = 100,
+    [ValidateRange(0, 100)][double]$Loss = 0,
+    [ValidateRange(1, 1000)][double]$Burst = 1,
+    [ValidateRange(0, 60000)][int]$Delay = 0,
+    [ValidateRange(0, 60000)][int]$Jitter = 0,
+    [ValidateRange(0, 100)][double]$Dup = 0,
+    [switch]$Reorder,
+    [int]$Seed = 0,
     [string]$Root = (Join-Path $env:LOCALAPPDATA "MultiMelonRig"),
     [int]$Minutes = 120
 )
@@ -174,13 +185,20 @@ foreach ($c in $Names) {
     $env:RIG_SHOTS = Join-Path $Root "shots\$c"
     $env:RIG_SPEED = "$Speed"
     if ($Software) { $env:RIG_RENDERER = "software" } else { Remove-Item Env:RIG_RENDERER -ErrorAction SilentlyContinue }
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $env:RIG_LINK_LOSS = $Loss.ToString($inv); $env:RIG_LINK_BURST = $Burst.ToString($inv)
+    $env:RIG_LINK_DELAY_MS = "$Delay"; $env:RIG_LINK_JITTER_MS = "$Jitter"; $env:RIG_LINK_DUP = $Dup.ToString($inv)
+    $env:RIG_LINK_REORDER = if ($Reorder) { "1" } else { "0" }
+    # (each console its own dice, but repeatable with -Seed)
+    $env:RIG_LINK_SEED = if ($Seed) { "$($Seed + [array]::IndexOf($All, $c))" } else { "0" }
     $argLine = "`"$(Join-Path $Root $c)`" `"$Cia`" $($Minutes * 60)"
     $p = Start-Process -FilePath $Rig -ArgumentList $argLine -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $Root "$c.out") -RedirectStandardError (Join-Path $Root "$c.err")
     "console $c started (process $($p.Id), port $($Ports[$c]))"
 }
 foreach ($v in "RIG_LINK_PORT", "RIG_LINK_PEERS", "RIG_LINK_LOOPBACK", "RIG_NO_INSTALL", "RIG_FAST_EXIT", "RIG_CMD", "RIG_SHOTS",
-             "RIG_SPEED", "RIG_RENDERER") {
+             "RIG_SPEED", "RIG_RENDERER", "RIG_LINK_LOSS", "RIG_LINK_BURST", "RIG_LINK_DELAY_MS", "RIG_LINK_JITTER_MS",
+             "RIG_LINK_DUP", "RIG_LINK_REORDER", "RIG_LINK_SEED") {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
 }
 "$($Names.Count) consoles booting. Check the renderer line in A.out; drive them with .\rig_cmd.ps1; see README.md."

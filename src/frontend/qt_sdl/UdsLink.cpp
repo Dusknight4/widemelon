@@ -61,11 +61,40 @@ std::mutex g_peerLock;
 std::map<Mac, Peer> g_peers;
 std::atomic<unsigned> g_framesOut {0}, g_framesIn {0};
 
+// (tests) the rough link: see Impairment. Frames held back wait in g_delayed (by due time) for the link's
+// thread to send them.
+std::mutex g_impLock;
+Impairment g_imp;
+std::atomic<bool> g_impOn {false}, g_impDelays {false}, g_cut {false};
+std::mt19937 g_rng;
+bool g_lossBurst = false;      // (inside a burst of losses)
+std::multimap<double, std::pair<std::vector<uint8_t>, sockaddr_in>> g_delayed;
+std::map<uint64_t, double> g_lastDue;       // (per destination: frames stay in order)
+std::atomic<unsigned> g_dropped {0}, g_doubled {0};
+
 double NowMs()
 {
     using namespace std::chrono;
     return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
 }
+
+// (g_impLock held) whether this datagram is lost: on its own, or in bursts (a two-state model whose losses
+// average lossPct and whose bursts average `burst` datagrams)
+bool LoseOne()
+{
+    if (g_imp.cut) return true;
+    const double loss = std::clamp(g_imp.lossPct / 100.0, 0.0, 1.0);
+    if (loss <= 0.0) return g_lossBurst = false;
+    if (loss >= 1.0) return true;
+    std::uniform_real_distribution<double> u(0.0, 1.0);
+    const double burst = std::max(1.0, g_imp.burst);
+    if (burst <= 1.0) return u(g_rng) < loss;
+    if (g_lossBurst) g_lossBurst = u(g_rng) >= 1.0 / burst;
+    else g_lossBurst = u(g_rng) < std::min(1.0, loss / (burst * (1.0 - loss)));
+    return g_lossBurst;
+}
+
+uint64_t AddrKey(const sockaddr_in& a) { return ((uint64_t)a.sin_addr.s_addr << 16) | a.sin_port; }
 
 void CloseSocket(Socket s)
 {
@@ -166,7 +195,39 @@ void HelloRound(bool awake)
         std::lock_guard l(g_peerLock);
         for (const auto& [mac, peer] : g_peers) to.push_back(peer.addr);
     }
-    for (const sockaddr_in& t : to) SendTo(hello, sizeof(hello), t);
+    for (const sockaddr_in& t : to)
+    {
+        if (g_impOn)
+        {
+            std::lock_guard l(g_impLock);
+            if (LoseOne()) { g_dropped++; continue; }
+        }
+        SendTo(hello, sizeof(hello), t);
+    }
+}
+
+// (the link's thread) frames held back by the rough link whose time has come
+void SendDelayed()
+{
+    std::vector<std::pair<std::vector<uint8_t>, sockaddr_in>> due;
+    {
+        std::lock_guard l(g_impLock);
+        const double now = NowMs();
+        while (!g_delayed.empty() && g_delayed.begin()->first <= now)
+        {
+            due.push_back(std::move(g_delayed.begin()->second));
+            g_delayed.erase(g_delayed.begin());
+        }
+    }
+    for (const auto& [msg, to] : due) SendTo(msg.data(), msg.size(), to);
+}
+
+// ms until the next held-back frame is due (0: one is due; -1: none waiting)
+double NextDelayedMs()
+{
+    std::lock_guard l(g_impLock);
+    if (g_delayed.empty()) return -1.0;
+    return std::max(0.0, g_delayed.begin()->first - NowMs());
 }
 
 // true: that console was known under another session (it has restarted: its old self is gone)
@@ -243,15 +304,21 @@ void Run()
             for (const Mac& m : gone) Lost(m);
         }
 
+        // (a rough link's held-back frames: sent when due, so wake up often while it delays)
+        SendDelayed();
+        long waitUs = 50000;
+        const double nextMs = NextDelayedMs();
+        if (nextMs >= 0.0) waitUs = std::min(waitUs, (long)(nextMs * 1000.0));
+        if (g_impDelays) waitUs = std::min(waitUs, 1000L);
         fd_set set;
         FD_ZERO(&set);
         FD_SET((int)g_sock, &set);
-        timeval tv {0, 50000};
+        timeval tv {0, waitUs};
         if (select((int)g_sock + 1, &set, nullptr, nullptr, &tv) <= 0) continue;
         sockaddr_in from {};
         socklen_t fromLen = sizeof(from);
         const int n = recvfrom((int)g_sock, (char*)buf.data(), (int)buf.size(), 0, (sockaddr*)&from, &fromLen);
-        if (n > 0) Receive(buf.data(), (size_t)n, from);
+        if (n > 0 && !g_cut) Receive(buf.data(), (size_t)n, from);     // (cut off: heard by no one, hears no one)
     }
 }
 
@@ -310,6 +377,9 @@ void Stop()
     CloseSocket(g_sock);
     g_sock = kNoSocket;
     g_boundPort = 0;
+    std::lock_guard l(g_impLock);
+    g_delayed.clear();
+    g_lastDue.clear();
 }
 
 uint16_t BoundPort() { return g_run ? g_boundPort : 0; }
@@ -341,8 +411,60 @@ void Send(const uint8_t dst[6], uint8_t type, uint8_t channel, const uint8_t* da
         if (std::memcmp(dst, everyone, 6) != 0 && it != g_peers.end()) to.push_back(it->second.addr);
         else for (const auto& [mac, peer] : g_peers) to.push_back(peer.addr);
     }
-    for (const sockaddr_in& t : to) SendTo(msg.data(), msg.size(), t);
     g_framesOut++;
+    if (!g_impOn)
+    {
+        for (const sockaddr_in& t : to) SendTo(msg.data(), msg.size(), t);
+        return;
+    }
+    // the rough link: each console's copy is lost, doubled and delayed on its own, as over the air
+    std::lock_guard l(g_impLock);
+    std::uniform_real_distribution<double> u(0.0, 1.0);
+    const double now = NowMs();
+    for (const sockaddr_in& t : to)
+    {
+        if (LoseOne())
+        {
+            g_dropped++;
+            continue;
+        }
+        const int copies = u(g_rng) * 100.0 < g_imp.dupPct ? 2 : 1;
+        if (copies == 2) g_doubled++;
+        for (int c = 0; c < copies; c++)
+        {
+            if (g_imp.delayMs <= 0.0 && g_imp.jitterMs <= 0.0)
+            {
+                SendTo(msg.data(), msg.size(), t);
+                continue;
+            }
+            double due = now + std::max(0.0, g_imp.delayMs) + std::max(0.0, g_imp.jitterMs) * u(g_rng);
+            if (!g_imp.reorder)
+            {
+                double& last = g_lastDue[AddrKey(t)];
+                due = std::max(due, last);
+                last = due;
+            }
+            g_delayed.emplace(due, std::make_pair(msg, t));
+        }
+    }
+}
+
+void SetImpairment(const Impairment& imp)
+{
+    std::lock_guard l(g_impLock);
+    g_imp = imp;
+    g_rng.seed(imp.seed ? imp.seed : std::random_device {}());
+    g_lossBurst = false;
+    g_impDelays = imp.delayMs > 0.0 || imp.jitterMs > 0.0;
+    g_cut = imp.cut;
+    g_impOn = imp.lossPct > 0.0 || imp.dupPct > 0.0 || g_impDelays || imp.cut;
+    if (!g_impDelays) g_lastDue.clear();     // (frames already held back still go out when due)
+}
+
+Impairment GetImpairment()
+{
+    std::lock_guard l(g_impLock);
+    return g_imp;
 }
 
 Stats GetStats()
@@ -354,6 +476,8 @@ Stats GetStats()
     }
     s.framesOut = g_framesOut;
     s.framesIn = g_framesIn;
+    s.dropped = g_dropped;
+    s.doubled = g_doubled;
     return s;
 }
 

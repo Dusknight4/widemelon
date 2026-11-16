@@ -14,6 +14,10 @@
 //        a keys script as above | shot NAME (a PNG of both screens) | touch X Y FRAMES (bottom screen) | quit
 //      RIG_SHOTS=folder (where shots go; default USERDIR/shots), RIG_SHOT_EVERY=seconds (shots by themselves)
 //      RIG_RENDERER=opengl (default) | software, RIG_SPEED=percent of the 3DS's speed (default 100; 0 = no limit)
+//      a rough link (on what this console sends; see UdsLink::Impairment): RIG_LINK_LOSS=percent,
+//      RIG_LINK_BURST=datagrams a loss burst lasts on average, RIG_LINK_DELAY_MS, RIG_LINK_JITTER_MS, RIG_LINK_DUP=percent,
+//      RIG_LINK_REORDER=1, RIG_LINK_SEED; while running, the command "link loss=5 delay=40 ..." (or "link off");
+//      "link cut=1" takes the console out of range (both ways), "link cut=0" brings it back
 // A .cia TITLE is installed first (once is enough: RIG_NO_INSTALL=1 then starts the installed game).
 
 #include <algorithm>
@@ -25,6 +29,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+extern "C" __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned int);   // (winmm)
+#endif
 
 #include "common/file_util.h"
 #include "common/logging/backend.h"
@@ -180,7 +188,7 @@ constexpr unsigned kPadUp = 1u << 12, kPadDown = 1u << 13, kPadLeft = 1u << 14, 
 
 struct Step
 {
-    enum Kind { Keys, Shot, Touch, Quit } kind = Keys;
+    enum Kind { Keys, Shot, Touch, Quit, Link } kind = Keys;
     unsigned keys = 0;
     unsigned long frames = 1;
     std::string name;
@@ -234,6 +242,12 @@ void ParseCommand(std::string line, std::deque<Step>& out)
             out.push_back(s);
         }
     }
+    else if (line == "link" || line.rfind("link ", 0) == 0)
+    {
+        s.kind = Step::Link;
+        s.name = line.size() > 5 ? line.substr(5) : "";
+        out.push_back(s);
+    }
     else if (line == "quit")
     {
         s.kind = Step::Quit;
@@ -241,6 +255,45 @@ void ParseCommand(std::string line, std::deque<Step>& out)
     }
     else
         ParseKeys(line, out);
+}
+
+// a rough link: "loss=5 burst=3 delay=40 jitter=20 dup=1 reorder=1 seed=7 cut=1" changes those (others keep their
+// value); "off" turns it all off
+UdsLink::Impairment ParseLink(const std::string& text, UdsLink::Impairment imp)
+{
+    size_t at = 0;
+    while (at < text.size())
+    {
+        size_t end = text.find(' ', at);
+        if (end == std::string::npos) end = text.size();
+        const std::string item = text.substr(at, end - at);
+        at = end + 1;
+        if (item == "off") { imp = {}; continue; }
+        const size_t eq = item.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = item.substr(0, eq);
+        const double v = std::atof(item.c_str() + eq + 1);
+        if (key == "loss") imp.lossPct = v;
+        else if (key == "burst") imp.burst = v;
+        else if (key == "delay") imp.delayMs = v;
+        else if (key == "jitter") imp.jitterMs = v;
+        else if (key == "dup") imp.dupPct = v;
+        else if (key == "reorder") imp.reorder = v != 0.0;
+        else if (key == "seed") imp.seed = (uint32_t)v;
+        else if (key == "cut") imp.cut = v != 0.0;
+    }
+    return imp;
+}
+
+std::string DescribeLink(const UdsLink::Impairment& i)
+{
+    if (i.cut) return "CUT OFF (out of range: nothing sent, nothing heard)";
+    if (i.lossPct <= 0 && i.delayMs <= 0 && i.jitterMs <= 0 && i.dupPct <= 0) return "clean";
+    char buf[200];
+    std::snprintf(buf, sizeof(buf), "rough: loss %g%% (bursts of %g), delay %g ms + 0-%g ms jitter%s, doubled %g%%",
+                  i.lossPct, std::max(1.0, i.burst), i.delayMs, i.jitterMs, i.reorder ? " (may reorder)" : " (in order)",
+                  i.dupPct);
+    return buf;
 }
 
 // both screens, the top one above the bottom one (centred), as a PNG
@@ -297,6 +350,9 @@ int main(int argc, char** argv)
     const double shotEvery = std::getenv("RIG_SHOT_EVERY") ? std::atof(std::getenv("RIG_SHOT_EVERY")) : 0.0;
     FileUtil::CreateFullPath(shotDir);
 
+#ifdef _WIN32
+    timeBeginPeriod(1);     // (1 ms timers: a rough link's delays and the frame pacing keep time)
+#endif
     FileUtil::SetUserPath(dir);
     // as MultiMelon: the game's own debug output (svcOutputDebugString) in the log too; RIG_LOG_FILTER replaces it
     Settings::values.log_filter.SetValue(std::getenv("RIG_LOG_FILTER") ? std::getenv("RIG_LOG_FILTER")
@@ -341,6 +397,17 @@ int main(int argc, char** argv)
             return 1;
         }
         std::printf("link: port %u\n", (unsigned)ThreeDSNet::Port());
+        UdsLink::Impairment imp;
+        auto env = [](const char* name, double& to) { if (const char* v = std::getenv(name)) to = std::atof(v); };
+        env("RIG_LINK_LOSS", imp.lossPct);
+        env("RIG_LINK_BURST", imp.burst);
+        env("RIG_LINK_DELAY_MS", imp.delayMs);
+        env("RIG_LINK_JITTER_MS", imp.jitterMs);
+        env("RIG_LINK_DUP", imp.dupPct);
+        if (const char* v = std::getenv("RIG_LINK_REORDER")) imp.reorder = v[0] == '1';
+        if (const char* v = std::getenv("RIG_LINK_SEED")) imp.seed = (uint32_t)std::strtoul(v, nullptr, 10);
+        UdsLink::SetImpairment(imp);
+        std::printf("link: %s\n", DescribeLink(imp).c_str());
     }
 
     if (const char* plugin = std::getenv("RIG_PLUGIN"))
@@ -424,10 +491,19 @@ int main(int argc, char** argv)
         {
             lastFrames = window.Frames;
             if (g_sdlWindow) SDL_PumpEvents();
-            while (!steps.empty() && steps.front().kind == Step::Shot)
+            while (!steps.empty() && (steps.front().kind == Step::Shot || steps.front().kind == Step::Link))
             {
-                const bool ok = SaveShot(shotDir + steps.front().name + ".png");
-                std::printf("[%5.1f s] shot %s%s\n", t, steps.front().name.c_str(), ok ? "" : " FAILED");
+                if (steps.front().kind == Step::Link)
+                {
+                    const auto imp = ParseLink(steps.front().name, UdsLink::GetImpairment());
+                    UdsLink::SetImpairment(imp);
+                    std::printf("[%5.1f s] link: %s\n", t, DescribeLink(imp).c_str());
+                }
+                else
+                {
+                    const bool ok = SaveShot(shotDir + steps.front().name + ".png");
+                    std::printf("[%5.1f s] shot %s%s\n", t, steps.front().name.c_str(), ok ? "" : " FAILED");
+                }
                 std::fflush(stdout);
                 steps.pop_front();
             }
@@ -467,8 +543,10 @@ int main(int argc, char** argv)
         if (t >= nextReport)
         {
             const auto s = UdsLink::GetStats();
-            std::printf("[%5.1f s] frames %lu (%.0f a second), link: %d nearby, frames out %u in %u\n", t, window.Frames,
-                        (window.Frames - reportFrames) / 5.0, s.peers, s.framesOut, s.framesIn);
+            char rough[64] = "";
+            if (s.dropped || s.doubled) std::snprintf(rough, sizeof(rough), ", dropped %u, doubled %u", s.dropped, s.doubled);
+            std::printf("[%5.1f s] frames %lu (%.0f a second), link: %d nearby, frames out %u in %u%s\n", t, window.Frames,
+                        (window.Frames - reportFrames) / 5.0, s.peers, s.framesOut, s.framesIn, rough);
             reportFrames = window.Frames;
             std::fflush(stdout);
             nextReport += 5.0;

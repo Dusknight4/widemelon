@@ -19,6 +19,11 @@ param(
     [Parameter(Mandatory = $true)][string]$Cia,
     [Parameter(Mandatory = $true)][string]$Save,
     [ValidateRange(2, 4)][int]$Consoles = 2,
+    # a rough link from the start, as rig_pair.ps1's options of the same names (default: clean)
+    [double]$Loss = 0,
+    [double]$Burst = 1,
+    [int]$Delay = 0,
+    [int]$Jitter = 0,
     [string]$Root = (Join-Path $env:LOCALAPPDATA "MultiMelonRig")
 )
 $ErrorActionPreference = "Stop"
@@ -32,7 +37,7 @@ function Send([string]$c, [string]$keys, [string]$shot) {
     else { & $cmd -I $c -Keys $keys -Root $Root | Out-Null }
 }
 
-& $pair -Up -Consoles $Consoles -Cia $Cia -Save $Save -Root $Root
+& $pair -Up -Consoles $Consoles -Cia $Cia -Save $Save -Root $Root -Loss $Loss -Burst $Burst -Delay $Delay -Jitter $Jitter
 
 # boot (title screen after ~25 s), Start, then the Main Menu: the gear icon (Multiplayer), Local Wireless.
 # (the book icon left of the gear is Delete Save: never press A on it)

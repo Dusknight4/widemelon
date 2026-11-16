@@ -44,13 +44,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 It brings up two linked consoles and goes through Main Menu > Multiplayer > Local Wireless. A hosts and B joins, both
 Check link and Start game, and B walks in town. It prints a screenshot's path at each step and takes about
-90 seconds once the game is installed. `-Consoles 3` (or 4) adds joiners. The consoles are left running in town for
+90 seconds once the game is installed. `-Consoles 3` (or 4) adds joiners; `-Loss`, `-Burst`, `-Delay` and `-Jitter` run it on a rough link. The consoles are left running in town for
 you to carry on; `.\rig_pair.ps1 -Down` stops them. Read the script: it's the simplest template for your own tests.
 
 ## rig_pair.ps1: start and stop the consoles
 ```powershell
 .\rig_pair.ps1 -Up -Cia <file.cia> -Save <save folder> [-Consoles 2|3|4] [-SaveB <folder>] [-SaveC ...] [-SaveD ...]
                [-Speed 100] [-Software] [-Root <folder>] [-Minutes 120] [-Reinstall]
+               [-Loss 5] [-Burst 3] [-Delay 30] [-Jitter 30] [-Dup 0] [-Reorder] [-Seed 0]
 .\rig_pair.ps1 -Status
 .\rig_pair.ps1 -Down
 ```
@@ -68,6 +69,7 @@ you to carry on; `.\rig_pair.ps1 -Down` stops them. Read the script: it's the si
   the way 3DSes do.
 - `-Software` uses the software renderer even with OpenGL (slow; only for comparison).
 - `-Minutes` is how long they run before quitting by themselves (default 120).
+- `-Loss`, `-Burst`, `-Delay`, `-Jitter`, `-Dup`, `-Reorder`, `-Seed` make the link rough (see "A rough link").
 
 `-Status` prints each console's last progress line. `-Down` quits them all.
 
@@ -89,7 +91,7 @@ its own `.metadata`: copy it into the save folder.
 
 ## rig_cmd.ps1: input and screenshots
 ```powershell
-.\rig_cmd.ps1 -I A|B|C|D [-Keys "..."] [-Touch "X Y FRAMES"] [-Shot NAME] [-Quit] [-Root ...] [-TimeoutSec 300]
+.\rig_cmd.ps1 -I A|B|C|D [-Link "..."] [-Keys "..."] [-Touch "X Y FRAMES"] [-Shot NAME] [-Quit] [-Root ...] [-TimeoutSec 300]
 ```
 - **`-Keys`**, a keys script: `step,step,...`, where a step is `keys*frames`.
   - Key names: `a b x y l r start select`, the D-pad `up down left right`, and the Circle Pad
@@ -104,6 +106,7 @@ its own `.metadata`: copy it into the save folder.
 - **`-Shot NAME`** takes a screenshot *after* the keys/touch before it have run. The script waits for the PNG and
   prints its path.
 - **`-Quit`** stops that console.
+- **`-Link "..."`** changes that console's rough link from that point (see "A rough link").
 
 Commands run in order on the console's own frames. They can be queued while earlier ones still run: a console picks
 up appended lines four times a second. To have several consoles act side by side, send each one's commands without
@@ -115,6 +118,7 @@ up appended lines four times a second. To have several consoles act side by side
 |---|---|
 | `down*3,*20,a*3,*240` | a keys script, as above |
 | `touch 160 120 6` | touch the bottom screen at (160, 120) for 6 frames |
+| `link loss=5 delay=30` | change this console's rough link (see "A rough link"); `link cut=1` takes it out of range |
 | `shot NAME` | a PNG `NAME.png` in the console's shots folder, logged in `A.out` as `shot NAME` |
 | `quit` | stop |
 | `# ...` | a comment |
@@ -135,7 +139,58 @@ together should check both with screenshots before the next step.
   frees its node; a joiner whose host has gone gets ConnectionLost (4). A killed console that's restarted comes back
   as a new session and is dropped at once, so it can join again.
 - **Measured, 2 consoles at full speed in town:** over 35 s the joiner received exactly what the host sent (5,125
-  frames; 606 the other way). Nothing is lost on 127.0.0.1.
+  frames; 606 the other way). Nothing is lost on 127.0.0.1, which is why the rig can make the link rough on
+  purpose (next section).
+
+## A rough link: loss, lag, outages
+Real 3DS wireless loses frames (often several in a row), delivers them late, and drops out when a console goes out
+of range or to sleep. A clean link hides the bugs that only show then: on the DS side of this project it hid three
+"was this message delivered?" bugs at once. Each console can make what it sends rough:
+
+| Setting | `rig_pair.ps1` (all consoles, from the start) | `link` command (one console, any time) |
+|---|---|---|
+| lose this percent of datagrams | `-Loss 5` | `loss=5` |
+| ...in bursts of this many on average (1 = each on its own) | `-Burst 3` | `burst=3` |
+| deliver each frame this late | `-Delay 30` (ms) | `delay=30` |
+| ...plus up to this much more, at random | `-Jitter 30` (ms) | `jitter=30` |
+| let frames overtake each other | `-Reorder` | `reorder=1` |
+| send this percent of frames twice | `-Dup 1` | `dup=1` |
+| repeatable dice | `-Seed 7` | `seed=7` |
+| **out of range**: nothing sent, nothing heard | | `cut=1`, back with `cut=0` |
+| all off | (the default) | `off` |
+
+```powershell
+.\psmd_town_demo.ps1 -Cia ... -Save ... -Loss 5 -Burst 3 -Delay 30 -Jitter 30     # the demo on a rough link
+.\rig_cmd.ps1 -I B -Link "loss=10 burst=4 delay=60 jitter=40"                     # rougher, from now on
+.\rig_cmd.ps1 -I B -Link "cut=1" -Keys "*1200"                                    # B out of range for 20 s...
+.\rig_cmd.ps1 -I B -Link "cut=0" -Keys "*600" -Shot b_back                        # ...and back
+```
+- `link` changes only the settings it names; the others keep their value. The change takes effect in order with
+  the console's other commands (after the keys before it), and `A.out` logs it.
+- Loss, delay and the rest apply to what that console *sends*, so set them on every console for both directions
+  (`rig_pair.ps1` does). `cut` is both ways.
+- With a rough link, `A.out`'s progress lines add "dropped N, doubled M".
+- **Outages:** a console that hears nothing for 15 s drops the other. A host frees that player's node; a joiner
+  whose host has gone gets ConnectionLost (4). `cut=1` for more than 15 s tests exactly that. `loss=100` instead
+  silences one direction only: the others drop that console, but it keeps hearing them.
+- **In order** (the default) means a frame never overtakes an earlier one. So when frames are frequent their delay
+  sits near delay + jitter rather than spread evenly. `-Reorder` spreads them evenly and lets them overtake.
+
+**Measured** (`linkcheck.exe`, numbered frames bounced off a second link endpoint, about 8,000 frames each):
+10% loss gave 10.4% lost (runs of 1.12 frames); 10% in bursts of 4 gave 10.5% (runs of 3.87); delay 40 +
+jitter 20 gave round trips of 40-62 ms; 5% doubled gave 5.0%; `cut` dropped everything, hellos included.
+
+**PSMD on a rough link (v1-alpha2, 2 consoles, 2026-11-15):**
+- 5% loss in bursts of 3, 30-60 ms lag: the whole demo worked (Host/Join, Check link, Start game, walking in town).
+- **B out of range for 21 s (`cut=1`):** after 15 s each console dropped the other. On both screens the partner's
+  Lucario just disappeared; there was no message, and both carried on alone in town. After `cut=0`, nothing
+  reconnected: B's game had stopped sending (connection lost) and stayed alone. Whether that's what PSMD should
+  do is the game's call.
+- **B silent one way for 20 s (`loss=100`):** the host dropped B and its Lucario disappeared. When B spoke again,
+  it reappeared on the host and play went on. **That recovery is probably an emulator leniency:** Azahar's host
+  accepts data from a console whose node it has freed (`nwm_uds.cpp`, `HandleSecureDataPacket` doesn't check the
+  sender). A real 3DS host most likely ignores a console that's no longer connected to it, so don't rely on that
+  recovery.
 
 ## A tested path through PSMD (v1-alpha2, the test save, 2026-11-15, full speed)
 This is what `psmd_town_demo.ps1` does, step by step:
@@ -185,6 +240,7 @@ Environment variables:
 | `RIG_LINK_PORT`, `RIG_LINK_PORTS` | the link's UDP port (default 7072), and how many ports from there it may take (default 1; MultiMelon uses 4) |
 | `RIG_LINK_PEERS` | `ip:port,...`: hellos go there instead of by broadcast |
 | `RIG_LINK_LOOPBACK=1` | bind to 127.0.0.1 only |
+| `RIG_LINK_LOSS`, `RIG_LINK_BURST`, `RIG_LINK_DELAY_MS`, `RIG_LINK_JITTER_MS`, `RIG_LINK_DUP`, `RIG_LINK_REORDER=1`, `RIG_LINK_SEED` | a rough link from the start (see "A rough link") |
 | `RIG_NO_LINK=1` | no link: the game's local wireless goes nowhere |
 | `RIG_NO_INSTALL=1` | a `.cia` TITLE is already installed: just start it |
 | `RIG_CMD` | the command file (see above) |

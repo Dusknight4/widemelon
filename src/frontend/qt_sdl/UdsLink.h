@@ -50,8 +50,27 @@ uint16_t BoundPort();
 // A frame to the console with that MAC (FF:FF:FF:FF:FF:FF: everyone). Doesn't block.
 void Send(const uint8_t dst[6], uint8_t type, uint8_t channel, const uint8_t* data, size_t len);
 
-// for the window title and logs: consoles heard in the last 15 s, frames out/in
-struct Stats { int peers = 0; unsigned framesOut = 0, framesIn = 0; };
+// for the window title and logs: consoles heard in the last 15 s, frames out/in; with an Impairment, the
+// datagrams it dropped and sent twice
+struct Stats { int peers = 0; unsigned framesOut = 0, framesIn = 0, dropped = 0, doubled = 0; };
 Stats GetStats();
+
+// (tests) a rough link, as real wireless can be, on what this console sends:
+// - lossPct: each datagram (frames and hellos) is lost with this chance, in bursts of `burst` datagrams on
+//   average (1: each on its own). 100 cuts the console off: after 15 s the others drop it, as one out of
+//   range.
+// - delayMs + 0..jitterMs: frames arrive this much later, in order (to each console) unless `reorder`.
+// - dupPct: a frame is sent twice with this chance.
+// - cut: out of range: nothing goes out and nothing that comes in is taken, both ways. After 15 s each side
+//   drops the other (a host frees its node; a joiner whose host has gone gets ConnectionLost).
+// All zero: off (the default), and frames go out at once as without it. Can change while running.
+struct Impairment
+{
+    double lossPct = 0, burst = 1, delayMs = 0, jitterMs = 0, dupPct = 0;
+    bool reorder = false, cut = false;
+    uint32_t seed = 0;      // (0: a random one)
+};
+void SetImpairment(const Impairment& imp);
+Impairment GetImpairment();
 
 }
