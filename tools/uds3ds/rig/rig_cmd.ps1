@@ -5,7 +5,7 @@
 .DESCRIPTION
   -Keys   a keys script: "keys*frames,keys*frames,...". Keys: a b x y l r start select up down left right (D-pad),
           cup cdown cleft cright (Circle Pad); several at once with +; "*frames" alone = nothing pressed.
-          Frames are the game's frames (the rig runs ~2.5 of them a second: "*25" is about 10 s).
+          Frames are the game's frames (60 a second with the graphics card, as on a 3DS; ~2.5 with -Software).
   -Touch  "X Y FRAMES": touch the bottom screen at X (0-319), Y (0-239) for that many frames.
   -Shot   NAME: a PNG of both screens (shots\<console>\NAME.png), after the keys/touch above have run; the script
           waits for it and prints its path.
@@ -19,7 +19,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet("A", "B")][string]$I,
+    [Parameter(Mandatory = $true)][ValidateSet("A", "B", "C", "D")][string]$I,
     [string]$Keys,
     [string]$Touch,
     [string]$Shot,

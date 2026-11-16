@@ -1,19 +1,23 @@
 <#
 .SYNOPSIS
-  Two headless MultiMelon 3DS consoles (rig3ds.exe), linked on 127.0.0.1 by MultiMelon's "Wifi as Local
+  Two to four headless MultiMelon 3DS consoles (rig3ds.exe), linked on 127.0.0.1 by MultiMelon's "Wifi as Local
   Multiplayer", each with its own copy of a save, driven by command files (rig_cmd.ps1). No window opens and
-  nothing takes the keyboard.
+  nothing takes the keyboard. They draw with the graphics card (full speed); -Software uses the slow software
+  renderer instead.
 
 .DESCRIPTION
   -Up      installs the CIA into console A (the first time, and again whenever -Cia is another file or a newer
-           build; -Reinstall forces it), gives console B the same game, puts a fresh copy of the save into both,
-           and starts both. Console A listens on port 7701, B on 7702.
-  -Status  the last progress line of each console (frames run, consoles heard, frames sent/received).
-  -Down    quits both.
+           build; -Reinstall forces it), gives the others the same game, puts a fresh copy of the save into each,
+           and starts them. -Consoles 3 or 4 adds C and D. Console A listens on port 7701, B on 7702, C 7703,
+           D 7704. -SaveB / -SaveC / -SaveD give that console another save than -Save.
+           -Speed: percent of a 3DS's speed (default 100; 0 = as fast as the PC can).
+  -Status  the last progress line of each console (frames run and frames a second, consoles heard, frames
+           sent/received).
+  -Down    quits them all.
   Everything lives under -Root (default: %LOCALAPPDATA%\MultiMelonRig, outside OneDrive: the game is ~2 GB).
-  A\ and B\ are the consoles (their log is A\log\azahar_log.txt), shots\A and shots\B the screenshots, A.cmd and
-  B.cmd the command files.
-  The source save is only read, never changed.
+  A\, B\, ... are the consoles (their log is A\log\azahar_log.txt), shots\A, shots\B, ... the screenshots, A.cmd,
+  B.cmd, ... the command files.
+  The source saves are only read, never changed.
 
 .EXAMPLE
   .\rig_pair.ps1 -Up -Cia ..\..\delta_psmd_mp33.cia -Save ..\..\handoff_v1_alpha\save_test_postgame_RF2_Lucario_Lv60
@@ -29,14 +33,20 @@ param(
     [switch]$Reinstall,
     [string]$Cia,
     [string]$Save,
+    [string]$SaveB,
+    [string]$SaveC,
+    [string]$SaveD,
+    [ValidateRange(2, 4)][int]$Consoles = 2,
+    [switch]$Software,
+    [ValidateRange(0, 1000)][int]$Speed = 100,
     [string]$Root = (Join-Path $env:LOCALAPPDATA "MultiMelonRig"),
     [int]$Minutes = 120
 )
 $ErrorActionPreference = "Stop"
 $Rig = Join-Path $PSScriptRoot "rig3ds.exe"
 $Ids = "Nintendo 3DS\00000000000000000000000000000000\00000000000000000000000000000000"
-$Ports = @{ A = 7701; B = 7702 }
-$Other = @{ A = "B"; B = "A" }
+$Ports = @{ A = 7701; B = 7702; C = 7703; D = 7704 }
+$All = @("A", "B", "C", "D")
 
 # the title id of a CIA (from its TMD), as 16 hex digits
 function Get-CiaTitleId([string]$path) {
@@ -62,21 +72,20 @@ function Get-RigProcesses {
 }
 
 if ($Down) {
-    foreach ($c in "A", "B") {
+    foreach ($c in $All) {
         $f = Join-Path $Root "$c.cmd"
         if (Test-Path $f) { Add-Content -Path $f -Value "quit" -Encoding ASCII }
     }
     for ($i = 0; $i -lt 20 -and (Get-RigProcesses); $i++) { Start-Sleep -Milliseconds 500 }
     Get-RigProcesses | Stop-Process -Force
-    "both consoles stopped"
+    "consoles stopped"
     return
 }
 
 if ($Status) {
-    foreach ($c in "A", "B") {
+    foreach ($c in $All) {
         $out = Join-Path $Root "$c.out"
-        $last = if (Test-Path $out) { Get-Content $out -Tail 1 } else { "(not started)" }
-        "${c}: $last"
+        if (Test-Path $out) { "${c}: $(Get-Content $out -Tail 1)" }
     }
     return
 }
@@ -86,48 +95,65 @@ if (-not $Cia -or -not (Test-Path $Cia)) { throw "-Cia: the game's .cia" }
 if (-not $Save -or -not (Test-Path $Save)) { throw "-Save: a folder with the save's files (as Azahar keeps them)" }
 if (Get-RigProcesses) { throw "consoles are running: .\rig_pair.ps1 -Down first" }
 $Cia = (Resolve-Path $Cia).Path
-$Save = (Resolve-Path $Save).Path
+$Names = $All[0..($Consoles - 1)]
+$Saves = @{}
+foreach ($c in $Names) {
+    $s = switch ($c) { "B" { $SaveB } "C" { $SaveC } "D" { $SaveD } default { "" } }
+    if (-not $s) { $s = $Save }
+    if (-not (Test-Path $s)) { throw "save folder not found: $s" }
+    $Saves[$c] = (Resolve-Path $s).Path
+}
 New-Item -ItemType Directory -Force -Path $Root | Out-Null
 $Root = (Resolve-Path $Root).Path
+# (consoles left from a bigger set before: their command files and progress go, so -Status and -Down see these)
+foreach ($c in $All) {
+    if ($Names -notcontains $c) { foreach ($x in "$c.cmd", "$c.out", "$c.err") { Remove-Item (Join-Path $Root $x) -ErrorAction SilentlyContinue } }
+}
 
 $tid = Get-CiaTitleId $Cia
 $low = $tid.Substring(8).ToLower()
 "title $tid"
-$titleA = Join-Path $Root "A\sdmc\$Ids\title\00040000\$low"
-$titleB = Join-Path $Root "B\sdmc\$Ids\title\00040000\$low"
+$Titles = @{}
+foreach ($c in $All) { $Titles[$c] = Join-Path $Root "$c\sdmc\$Ids\title\00040000\$low" }
+$titleA = $Titles["A"]
 
 # install into A (the first time, or when the CIA is another build than the one installed: same title, so one
-# replaces the other), then give B the same game: hard links, no second copy
+# replaces the other), then give the others the same game: hard links, no second copy
 $item = Get-Item $Cia
 $stamp = "$Cia|$($item.Length)|$($item.LastWriteTimeUtc.Ticks)"
 $stampFile = Join-Path $Root "installed.txt"
 $installed = if (Test-Path $stampFile) { (Get-Content $stampFile -Raw).Trim() } else { "" }
 if ($Reinstall -or $installed -ne $stamp -or -not (Test-Path (Join-Path $titleA "content"))) {
-    foreach ($t in $titleA, $titleB) { if (Test-Path (Join-Path $t "content")) { Remove-Item -Recurse -Force (Join-Path $t "content") } }
+    foreach ($t in $Titles.Values) { if (Test-Path (Join-Path $t "content")) { Remove-Item -Recurse -Force (Join-Path $t "content") } }
     "installing $($item.Name) into console A (a minute or two)..."
-    $env:RIG_NO_LINK = "1"; $env:RIG_FAST_EXIT = "1"
+    $env:RIG_NO_LINK = "1"; $env:RIG_FAST_EXIT = "1"; $env:RIG_RENDERER = "software"
     & $Rig (Join-Path $Root "A") $Cia 1 | Out-File -Encoding ASCII (Join-Path $Root "A_install.log")
-    Remove-Item Env:RIG_NO_LINK, Env:RIG_FAST_EXIT
+    Remove-Item Env:RIG_NO_LINK, Env:RIG_FAST_EXIT, Env:RIG_RENDERER
     if (-not (Test-Path (Join-Path $titleA "content"))) { throw "install failed: see A_install.log" }
     Set-Content -Path $stampFile -Value $stamp -Encoding UTF8
 }
-New-Item -ItemType Directory -Force -Path (Join-Path $titleB "content") | Out-Null
-foreach ($f in Get-ChildItem (Join-Path $titleA "content") -File) {
-    $dst = Join-Path $titleB "content\$($f.Name)"
-    if (Test-Path $dst) { continue }
-    try { New-Item -ItemType HardLink -Path $dst -Target $f.FullName | Out-Null }
-    catch { Copy-Item $f.FullName $dst }
+foreach ($c in $Names | Where-Object { $_ -ne "A" }) {
+    $t = $Titles[$c]
+    New-Item -ItemType Directory -Force -Path (Join-Path $t "content") | Out-Null
+    foreach ($f in Get-ChildItem (Join-Path $titleA "content") -File) {
+        $dst = Join-Path $t "content\$($f.Name)"
+        if (Test-Path $dst) { continue }
+        try { New-Item -ItemType HardLink -Path $dst -Target $f.FullName | Out-Null }
+        catch { Copy-Item $f.FullName $dst }
+    }
+    if (-not (Test-Path (Join-Path $Root "$c\nand"))) { Copy-Item -Recurse (Join-Path $Root "A\nand") (Join-Path $Root "$c\nand") }
 }
-if (-not (Test-Path (Join-Path $Root "B\nand"))) { Copy-Item -Recurse (Join-Path $Root "A\nand") (Join-Path $Root "B\nand") }
 
-# a fresh copy of the save in each
-foreach ($t in $titleA, $titleB) {
+# a fresh copy of its save in each
+foreach ($c in $Names) {
+    $t = $Titles[$c]
+    $src = $Saves[$c]
     $data = Join-Path $t "data\00000001"
     if (Test-Path $data) { Remove-Item -Recurse -Force $data }
     New-Item -ItemType Directory -Force -Path $data | Out-Null
-    Get-ChildItem $Save -File | Where-Object { $_.Name -ne "00000001.metadata" } | Copy-Item -Destination $data
+    Get-ChildItem $src -File | Where-Object { $_.Name -ne "00000001.metadata" } | Copy-Item -Destination $data
     $meta = Join-Path $t "data\00000001.metadata"
-    $srcMeta = Join-Path $Save "00000001.metadata"
+    $srcMeta = Join-Path $src "00000001.metadata"
     if (Test-Path $srcMeta) { Copy-Item $srcMeta $meta -Force }
     elseif (-not (Test-Path $meta)) {
         # the save's format info as Delta PSMD makes it (size 0x40000, 8 folders, 8 files); other games: their own
@@ -135,23 +161,26 @@ foreach ($t in $titleA, $titleB) {
     }
 }
 
-# start both, hidden, each with its command file
-foreach ($c in "A", "B") {
+# start them, hidden, each with its command file; each says hello to the others' ports
+foreach ($c in $Names) {
     $cmd = Join-Path $Root "$c.cmd"
     Set-Content -Path $cmd -Value $null -Encoding ASCII
     $env:RIG_LINK_PORT = "$($Ports[$c])"
-    $env:RIG_LINK_PEERS = "127.0.0.1:$($Ports[$Other[$c]])"
+    $env:RIG_LINK_PEERS = (($Names | Where-Object { $_ -ne $c } | ForEach-Object { "127.0.0.1:$($Ports[$_])" }) -join ",")
     $env:RIG_LINK_LOOPBACK = "1"
     $env:RIG_NO_INSTALL = "1"
     $env:RIG_FAST_EXIT = "1"
     $env:RIG_CMD = $cmd
     $env:RIG_SHOTS = Join-Path $Root "shots\$c"
+    $env:RIG_SPEED = "$Speed"
+    if ($Software) { $env:RIG_RENDERER = "software" } else { Remove-Item Env:RIG_RENDERER -ErrorAction SilentlyContinue }
     $argLine = "`"$(Join-Path $Root $c)`" `"$Cia`" $($Minutes * 60)"
     $p = Start-Process -FilePath $Rig -ArgumentList $argLine -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $Root "$c.out") -RedirectStandardError (Join-Path $Root "$c.err")
     "console $c started (process $($p.Id), port $($Ports[$c]))"
 }
-foreach ($v in "RIG_LINK_PORT", "RIG_LINK_PEERS", "RIG_LINK_LOOPBACK", "RIG_NO_INSTALL", "RIG_FAST_EXIT", "RIG_CMD", "RIG_SHOTS") {
+foreach ($v in "RIG_LINK_PORT", "RIG_LINK_PEERS", "RIG_LINK_LOOPBACK", "RIG_NO_INSTALL", "RIG_FAST_EXIT", "RIG_CMD", "RIG_SHOTS",
+             "RIG_SPEED", "RIG_RENDERER") {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
 }
-"both booting (about a minute to the title screen). Drive them with .\rig_cmd.ps1; see README.md."
+"$($Names.Count) consoles booting. Check the renderer line in A.out; drive them with .\rig_cmd.ps1; see README.md."

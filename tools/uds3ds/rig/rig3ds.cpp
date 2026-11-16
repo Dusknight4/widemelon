@@ -1,6 +1,7 @@
-// rig3ds: runs a 3DS title headless (Azahar's core, software renderer, no window) for a while, with
-// MultiMelon's "Wifi as Local Multiplayer" link (ThreeDSNet/UdsLink), and prints what happened. Two of
-// them on loopback test 3DS local wireless between consoles without opening any window.
+// rig3ds: runs a 3DS title headless (Azahar's core, no window shown) for a while, with MultiMelon's "Wifi as
+// Local Multiplayer" link (ThreeDSNet/UdsLink), and prints what happened. Two of them on loopback test 3DS
+// local wireless between consoles without opening any window. It draws with the graphics card (OpenGL 4.3, in a
+// hidden window: full speed) or, with RIG_RENDERER=software or no OpenGL 4.3, Azahar's software renderer (slow).
 //
 // usage: rig3ds USERDIR TITLE SECONDS [KEYS]
 //   USERDIR  this console's 3DS folder (its sdmc/, nand/, log/ and mac.txt)
@@ -12,6 +13,7 @@
 //      RIG_CMD=file: more commands, one per line, read while it runs (appended lines are picked up):
 //        a keys script as above | shot NAME (a PNG of both screens) | touch X Y FRAMES (bottom screen) | quit
 //      RIG_SHOTS=folder (where shots go; default USERDIR/shots), RIG_SHOT_EVERY=seconds (shots by themselves)
+//      RIG_RENDERER=opengl (default) | software, RIG_SPEED=percent of the 3DS's speed (default 100; 0 = no limit)
 // A .cia TITLE is installed first (once is enough: RIG_NO_INSTALL=1 then starts the installed game).
 
 #include <algorithm>
@@ -38,7 +40,12 @@
 #include "core/file_sys/cia_container.h"
 #include "core/file_sys/title_metadata.h"
 #include "video_core/gpu.h"
+#include "video_core/renderer_base.h"
+#include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_software/renderer_software.h"
+
+#define SDL_MAIN_HANDLED
+#include <SDL.h>
 
 #include "lodepng.h"
 
@@ -80,15 +87,88 @@ public:
     std::unique_ptr<Input::AnalogDevice> Create(const Common::ParamPackage&) override { return std::make_unique<Pad>(); }
 };
 
+// Azahar draws into this. With OpenGL its context is always current on the one thread (as in MultiMelon).
 class Window final : public Frontend::EmuWindow
 {
 public:
-    Window() { window_info.type = Frontend::WindowSystemType::Headless; UpdateCurrentFramebufferLayout(400, 480); }
-    void PollEvents() override { Frames++; }
+    explicit Window(bool gl)
+    {
+        strict_context_required = gl;
+        window_info.type = gl ? Frontend::WindowSystemType::Windows : Frontend::WindowSystemType::Headless;
+        UpdateCurrentFramebufferLayout(400, 480);   // top screen above, bottom screen centred below
+    }
+    void PollEvents() override { Frames++; }    // (once a frame, from the renderer's EndFrame)
     void MakeCurrent() override {}
     void DoneCurrent() override {}
     unsigned long Frames = 0;
 };
+
+// OpenGL 4.3 core in a window that's never shown (nothing on screen, no focus taken); false if there's none
+SDL_Window* g_sdlWindow = nullptr;
+GLuint g_shotFbo = 0, g_shotTex = 0;
+
+bool StartGL()
+{
+    SDL_SetMainReady();
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return false;
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    g_sdlWindow = SDL_CreateWindow("rig3ds", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 400, 480,
+                                   SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    SDL_GLContext context = g_sdlWindow ? SDL_GL_CreateContext(g_sdlWindow) : nullptr;
+    if (!context || SDL_GL_MakeCurrent(g_sdlWindow, context) != 0 || !gladLoadGL())
+    {
+        if (g_sdlWindow) SDL_DestroyWindow(g_sdlWindow);
+        g_sdlWindow = nullptr;
+        SDL_Quit();
+        return false;
+    }
+    SDL_GL_SetSwapInterval(0);
+    std::printf("renderer: OpenGL, %s\n", (const char*)glGetString(GL_RENDERER));
+    return true;
+}
+
+// the newest frame, read back from the card: 400x480 RGBA, row 0 at the top
+bool ReadFrameGL(std::vector<unsigned char>& img)
+{
+    const unsigned W = 400, H = 480;
+    // Azahar keeps its own copy of the GL state and sends only what differs from it: put the context in its
+    // default state (through that copy), do ours, put back what we changed, then Azahar's state over it
+    const OpenGL::OpenGLState saved = OpenGL::OpenGLState::GetCurState();
+    OpenGL::OpenGLState{}.Apply();
+    if (!g_shotFbo)
+    {
+        glGenFramebuffers(1, &g_shotFbo);
+        glGenTextures(1, &g_shotTex);
+        glBindTexture(GL_TEXTURE_2D, g_shotTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, g_shotFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_shotTex, 0);
+    }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_shotFbo);
+    glViewport(0, 0, W, H);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    Core::System::GetInstance().GPU().Renderer().TryPresent(0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_shotFbo);
+    GLint pack = 0;
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    std::vector<unsigned char> raw(W * H * 4);
+    glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, raw.data());
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pack);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, 0, 0);
+    saved.Apply();
+    img.assign(W * H * 4, 0);
+    for (unsigned y = 0; y < H; y++)    // (GL's rows go bottom up)
+        std::copy_n(&raw[(size_t)(H - 1 - y) * W * 4], W * 4, &img[(size_t)y * W * 4]);
+    for (size_t i = 3; i < img.size(); i += 4) img[i] = 255;
+    return true;
+}
 
 const char* kNames[] = {"a", "b", "x", "y", "up", "down", "left", "right", "l", "r", "start", "select",
                         "cup", "cdown", "cleft", "cright"};
@@ -166,11 +246,15 @@ void ParseCommand(std::string line, std::deque<Step>& out)
 // both screens, the top one above the bottom one (centred), as a PNG
 bool SaveShot(const std::string& path)
 {
+    const unsigned W = 400, H = 480;
     auto* sw = dynamic_cast<SwRenderer::RendererSoftware*>(&Core::System::GetInstance().GPU().Renderer());
-    if (!sw) return false;
+    if (!sw)
+    {
+        std::vector<unsigned char> img;
+        return g_sdlWindow && ReadFrameGL(img) && lodepng_encode32_file(path.c_str(), img.data(), W, H) == 0;
+    }
     const auto& top = sw->Screen(VideoCore::ScreenId::TopLeft);
     const auto& bottom = sw->Screen(VideoCore::ScreenId::Bottom);
-    const unsigned W = 400, H = 480;
     std::vector<unsigned char> img(W * H * 4, 0);
     for (size_t i = 3; i < img.size(); i += 4) img[i] = 255;
     // (a ScreenInfo holds the picture as width = screen height: rows of info.height pixels, info.width of them)
@@ -231,8 +315,17 @@ int main(int argc, char** argv)
     Settings::values.current_input_profile.analogs[Settings::NativeAnalog::CirclePad] = "engine:rigpad";
     Settings::values.current_input_profile.touch_device = "engine:emu_window";
 
-    Settings::values.graphics_api = Settings::GraphicsAPI::Software;
-    Settings::values.frame_limit = 100;
+    const char* rendererName = std::getenv("RIG_RENDERER");
+    const bool wantGL = !rendererName || std::string(rendererName) != "software";
+    const bool gl = wantGL && StartGL();
+    if (wantGL && !gl) std::printf("renderer: no OpenGL 4.3 here, so the software renderer (slow)\n");
+    else if (!gl) std::printf("renderer: software (slow)\n");
+    Settings::values.graphics_api = gl ? Settings::GraphicsAPI::OpenGL : Settings::GraphicsAPI::Software;
+    Settings::values.use_gles = false;
+    Settings::values.use_vsync = false;
+    Settings::values.resolution_factor = 1;
+    Settings::values.layout_option = Settings::LayoutOption::Default;
+    Settings::values.frame_limit = std::getenv("RIG_SPEED") ? std::max(0.0, std::atof(std::getenv("RIG_SPEED"))) : 100.0;
     Settings::values.output_type = AudioCore::SinkType::Null;
 
     if (!std::getenv("RIG_NO_LINK"))
@@ -273,15 +366,20 @@ int main(int argc, char** argv)
         std::printf("title %016llX: %s\n", (unsigned long long)tid, game.c_str());
     }
 
-    Window window;
+    Window window(gl);
     system.ApplySettings();
     const auto result = system.Load(window, game);
     std::printf("load: %d\n", (int)result);
     std::fflush(stdout);
     if (result != Core::System::ResultStatus::Success) return 1;
+    {
+        u64 programId = 0;
+        system.GetAppLoader().ReadProgramId(programId);
+        system.GPU().ApplyPerProgramSettings(programId);    // (as MultiMelon does)
+    }
 
     const auto start = std::chrono::steady_clock::now();
-    unsigned long stepFrames = 0, lastFrames = 0;
+    unsigned long stepFrames = 0, lastFrames = 0, reportFrames = 0;
     double nextReport = 5.0, nextCmdCheck = 0.0, nextShot = shotEvery;
     size_t cmdRead = 0;     // (bytes of RIG_CMD done)
     bool touching = false, quit = false;
@@ -325,6 +423,7 @@ int main(int argc, char** argv)
         if (window.Frames != lastFrames)
         {
             lastFrames = window.Frames;
+            if (g_sdlWindow) SDL_PumpEvents();
             while (!steps.empty() && steps.front().kind == Step::Shot)
             {
                 const bool ok = SaveShot(shotDir + steps.front().name + ".png");
@@ -368,7 +467,9 @@ int main(int argc, char** argv)
         if (t >= nextReport)
         {
             const auto s = UdsLink::GetStats();
-            std::printf("[%5.1f s] frames %lu, link: %d nearby, frames out %u in %u\n", t, window.Frames, s.peers, s.framesOut, s.framesIn);
+            std::printf("[%5.1f s] frames %lu (%.0f a second), link: %d nearby, frames out %u in %u\n", t, window.Frames,
+                        (window.Frames - reportFrames) / 5.0, s.peers, s.framesOut, s.framesIn);
+            reportFrames = window.Frames;
             std::fflush(stdout);
             nextReport += 5.0;
         }
