@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <random>
 #include <string>
@@ -45,14 +46,46 @@ u32 Be32(const u8* p) { return (u32)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; 
 u32 Le32(const u8* p) { return p[0] | p[1] << 8 | p[2] << 16 | (u32)p[3] << 24; }
 u16 Le16(const u8* p) { return (u16)(p[0] | p[1] << 8); }
 
+// (FAKE_DUMP=file: the frames sent and received, the first few of each kind, in hex: test vectors)
+FILE* g_dump = nullptr;
+std::mutex g_dumpLock;
+void Dump(const char* dir, const Frame& f)
+{
+    if (!g_dump) return;
+    static const char* names[] = {"Beacon", "Data", "Authentication", "AssociationResponse", "Deauthentication", "NodeMap"};
+    std::lock_guard<std::mutex> l(g_dumpLock);
+    // data frames: EAPoL (all) and secure data (a few); others: a few of each, per direction
+    static std::map<std::string, int> seen;
+    std::string kind = std::string(dir) + ((u8)f.type < 6 ? names[(u8)f.type] : "?");
+    if (f.type == FrameType::Data && f.data.size() >= 8) kind += (f.data[6] == 0x88 && f.data[7] == 0x8E) ? "/EAPoL" : "/SecureData";
+    if (++seen[kind] > (kind.find("EAPoL") != std::string::npos ? 4 : 2)) return;
+    std::fprintf(g_dump, "%s %s channel %u  src %02X:%02X:%02X:%02X:%02X:%02X  dst %02X:%02X:%02X:%02X:%02X:%02X  %u bytes\n", dir,
+                 (u8)f.type < 6 ? names[(u8)f.type] : "?", f.channel, f.src[0], f.src[1], f.src[2], f.src[3], f.src[4], f.src[5],
+                 f.dst[0], f.dst[1], f.dst[2], f.dst[3], f.dst[4], f.dst[5], (unsigned)f.data.size());
+    for (size_t i = 0; i < f.data.size(); i += 16)
+    {
+        std::fprintf(g_dump, "  %04zx:", i);
+        for (size_t j = i; j < i + 16 && j < f.data.size(); j++) std::fprintf(g_dump, " %02X", f.data[j]);
+        std::fprintf(g_dump, "\n");
+    }
+    std::fflush(g_dump);
+}
+
 struct LinkHost final : Host
 {
     std::mutex m;
     std::condition_variable cv;
     bool connected = false;
     std::atomic<unsigned> connectionEvents {0}, bindEvents {0};
+    Mac self {};
 
-    void Send(const Frame& f) override { UdsLink::Send(f.dst.data(), (u8)f.type, f.channel, f.data.data(), f.data.size()); }
+    void Send(const Frame& f) override
+    {
+        Frame out = f;
+        out.src = self;
+        Dump("SENT", out);
+        UdsLink::Send(f.dst.data(), (u8)f.type, f.channel, f.data.data(), f.data.size());
+    }
     void SignalConnectionEvent() override { connectionEvents++; }
     void SignalBindEvent(u32) override { bindEvents++; }
     void SignalConnected() override
@@ -178,6 +211,8 @@ int main(int argc, char** argv)
     const u64 seconds = std::getenv("FAKE_SECONDS") ? (u64)std::atoi(std::getenv("FAKE_SECONDS")) : 20;
     const bool vanish = std::getenv("FAKE_VANISH") != nullptr;  // (tests: gone without a word, as a console switched off)
     LinkHost host;
+    host.self = mac;
+    if (const char* d = std::getenv("FAKE_DUMP")) g_dump = std::fopen(d, "w");
     Service uds(host, mac);
 
     UdsLink::Config cfg;
@@ -192,6 +227,7 @@ int main(int argc, char** argv)
             std::memcpy(f.dst.data(), dst, 6);
             f.channel = channel;
             f.data.assign(data, data + len);
+            Dump("RECEIVED", f);
             uds.OnFrame(f);
         }, [&] { return uds.Initialized(); }))
     {
