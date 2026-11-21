@@ -37,6 +37,7 @@ extern "C" __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned
 #include "common/file_util.h"
 #include "common/logging/backend.h"
 #include "common/settings.h"
+#include "audio_core/input_details.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
 #include "core/frontend/emu_window.h"
@@ -383,6 +384,13 @@ int main(int argc, char** argv)
     Settings::values.layout_option = Settings::LayoutOption::Default;
     Settings::values.frame_limit = std::getenv("RIG_SPEED") ? std::max(0.0, std::atof(std::getenv("RIG_SPEED"))) : 100.0;
     Settings::values.output_type = AudioCore::SinkType::Null;
+    // the microphone: none (silence) unless RIG_MIC=static (noise). Azahar's Auto opens the PC's real microphone
+    // through cubeb, which aborts here (COM isn't initialised on the emulation thread) the moment a title samples.
+    {
+        const char* mic = std::getenv("RIG_MIC");
+        Settings::values.input_type = (mic && std::string(mic) == "static") ? AudioCore::InputType::Static
+                                                                           : AudioCore::InputType::Null;
+    }
 
     if (!std::getenv("RIG_NO_LINK"))
     {
