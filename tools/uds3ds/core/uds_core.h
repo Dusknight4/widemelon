@@ -181,6 +181,10 @@ private:
     bool hosting = false;
     u64 nextBeaconMs = 0;
     double beaconDue = 0.0;
+    // a join asks again every JoinRetryMs while no answer comes (a 3DS's radio resends lost frames)
+    bool joinRetrying = false;
+    int joinRetries = 0;
+    u64 joinRetryDue = 0;   // (0: set on the next Tick)
 };
 
 }

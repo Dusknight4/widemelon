@@ -26,6 +26,8 @@ constexpr u16 HostNodeId = 1;
 constexpr u16 NodeIdSpec = 0;
 constexpr size_t MaxBeacons = 15;
 constexpr double BeaconIntervalMs = 100 * 1.024;
+constexpr u64 JoinRetryMs = 250;    // a join with no answer asks again this often, at most JoinRetries times (4 s)
+constexpr int JoinRetries = 16;
 constexpr u8 DefaultChannel = 11;
 constexpr u16 ExtraCapabilities = 0x0431;
 constexpr u32 EncryptedDataCutoff = 0xFA;
@@ -223,6 +225,9 @@ void Service::ConnectToNetwork(const u8* info, size_t size, u8 type)
         std::memcpy(networkInfo.data(), info, std::min(size, networkInfo.size()));
         connectionType = type;
         status.status = Connecting;
+        joinRetrying = true;
+        joinRetries = 0;
+        joinRetryDue = 0;
         auth.type = FrameType::Authentication;
         auth.channel = networkChannel;
         auth.data = {0, 0, 1, 0, 0, 0};    // open system, SEQ1, successful
@@ -577,6 +582,28 @@ std::vector<u8> Service::BeaconFrame()
 void Service::Tick(u64 nowMs)
 {
     std::lock_guard<std::recursive_mutex> l(lock);
+    // a join with no answer yet asks again (Authentication SEQ1), as MultiMelon's Azahar does: the host
+    // answers a repeat, and gives a console it already took the same node again
+    if (status.status == Connecting && joinRetrying)
+    {
+        if (joinRetryDue == 0)
+            joinRetryDue = nowMs + JoinRetryMs;
+        else if (nowMs >= joinRetryDue)
+        {
+            if (++joinRetries > JoinRetries)
+                joinRetrying = false;
+            else
+            {
+                Frame auth;
+                auth.type = FrameType::Authentication;
+                auth.channel = networkChannel;
+                auth.data = {0, 0, 1, 0, 0, 0};
+                std::memcpy(auth.dst.data(), &networkInfo[NI_HostMac], 6);
+                Send(auth);
+                joinRetryDue = nowMs + JoinRetryMs;
+            }
+        }
+    }
     if (!hosting || status.status != ConnectedAsHost) return;
     if (beaconDue == 0.0) beaconDue = (double)nowMs + BeaconIntervalMs;
     if ((double)nowMs < beaconDue) return;
@@ -616,14 +643,17 @@ void Service::HandleAuthentication(const Frame& f)
 {
     if (f.data.size() < 6 || Le16(&f.data[2]) != 1) return;     // only SEQ1 needs an answer
     if (status.status != ConnectedAsHost) return;
-    if (nodeMap.count(f.src)) return;
-    if (status.maxNodes == status.totalNodes) return;           // (no reject frame, as Azahar)
+    // a console asking again is answered again: one whose join never finished starts over; one already in
+    // (its EAPoL-Logoff was lost) keeps its node, and its EAPoL-Start gets that node's logoff again
+    const auto known = nodeMap.find(f.src);
+    const bool alreadyIn = known != nodeMap.end() && known->second.connected;
+    if (!alreadyIn && status.maxNodes == status.totalNodes) return;     // (no reject frame, as Azahar)
     Frame auth;
     auth.type = FrameType::Authentication;
     auth.channel = networkChannel;
     auth.data = {0, 0, 2, 0, 0, 0};     // SEQ2
     auth.dst = f.src;
-    nodeMap[f.src].connected = false;
+    if (!alreadyIn) nodeMap[f.src].connected = false;
     Send(auth);
 
     // the association response: capabilities, status, association id 1 | 0xC000, SSID "%08X" of the network id
@@ -705,12 +735,17 @@ void Service::HandleEapol(const Frame& f)
     {
         if (status.status != ConnectedAsHost || f.data.size() < LLC + EapolStartSize) return;
         auto it = nodeMap.find(f.src);
-        if (it == nodeMap.end() || it->second.connected) return;
-        if (status.maxNodes == status.totalNodes) return;
+        if (it == nodeMap.end()) return;
+        // (a client already in asks again because its logoff was lost: the same node's logoff again)
+        const bool again = it->second.connected;
+        if (again && it->second.spec) return;
+        if (!again && status.maxNodes == status.totalNodes) return;
         const u8* p = &f.data[LLC];
         const u8 type = p[4];
         NodeInfo node = ReadEapolNode(p + 8);
-        if (type == 1)  // client
+        if (again)
+            node.networkNodeId = it->second.nodeId;
+        else if (type == 1)  // client
         {
             const u16 id = NextNodeId();
             if (id == 0) return;
@@ -730,7 +765,8 @@ void Service::HandleEapol(const Frame& f)
             return;
 
         // EAPoL-Logoff: the node id given and every node, to everyone (as Azahar: a 3DS sends it to the new
-        // client only)
+        // client only), naming the client it's for (Azahar leaves that empty; MultiMelon fills it, so other
+        // consoles still joining don't take it as theirs)
         Frame logoff;
         logoff.type = FrameType::Data;
         logoff.channel = networkChannel;
@@ -739,13 +775,14 @@ void Service::HandleEapol(const Frame& f)
         std::vector<u8> q(EapolLogoffSize, 0);
         PutBe16(&q[0], EapolLogoff);
         PutBe16(&q[4], node.networkNodeId);
+        std::memcpy(&q[6], f.src.data(), 6);
         q[18] = networkInfo[NI_TotalNodes];
         q[19] = networkInfo[NI_MaxNodes];
         for (size_t i = 0; i < networkInfo[NI_MaxNodes] && i < nodeInfo.size() && i < kMaxNodes; i++)
             WriteEapolNode(nodeInfo[i], &q[24 + i * EapolNodeSize]);
         logoff.data.insert(logoff.data.end(), q.begin(), q.end());
         Send(logoff);
-        host.SignalConnectionEvent();
+        if (!again) host.SignalConnectionEvent();
     }
     else if (f.data.size() >= LLC + EapolLogoffSize && (status.status == Connecting || status.status == ConnectedAsClient ||
                                                         status.status == ConnectedAsSpectator))
@@ -754,6 +791,13 @@ void Service::HandleEapol(const Frame& f)
         const u8 connected = q[18], maxNodes = q[19];
         if (status.status == Connecting)
         {
+            // only the logoff for us: other consoles joining at the same time hear each other's (it goes to
+            // everyone), and taking one gave two joiners the same node. A host that leaves the client MAC
+            // empty (Azahar, older MultiMelons) can't be told apart: its logoff is taken as before.
+            static const Mac kNoMac {};
+            Mac client;
+            std::memcpy(client.data(), &q[6], 6);
+            if (client != kNoMac && client != mac) return;
             std::memcpy(&networkInfo[NI_HostMac], f.src.data(), 6);
             networkInfo[NI_TotalNodes] = connected;
             networkInfo[NI_MaxNodes] = maxNodes;
