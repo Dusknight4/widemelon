@@ -313,7 +313,8 @@ void Run()
         fd_set set;
         FD_ZERO(&set);
         FD_SET((int)g_sock, &set);
-        timeval tv {0, waitUs};
+        timeval tv {};
+        tv.tv_usec = (decltype(tv.tv_usec))waitUs;     // (an int on macOS, a long elsewhere)
         if (select((int)g_sock + 1, &set, nullptr, nullptr, &tv) <= 0) continue;
         sockaddr_in from {};
         socklen_t fromLen = sizeof(from);

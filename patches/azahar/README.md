@@ -21,3 +21,10 @@ Apply to Azahar's unified source (release 2126.2) before building its core libra
 - `0002-rig-3dsx-program-id.patch` (tests only): with `AZAHAR_3DSX_PROGRAM_ID=<hex>` set, a .3dsx runs under that
   title id. An application id (0004000x...) makes the plugin loader load a Luma plugin into homebrew, so rig3ds
   can run udstest.3dsx with the MultiMelon Wifi plugin serving its UDS. Without the variable nothing changes.
+- `0003-vulkan-offscreen.patch`: the Vulkan renderer without a window, for macOS, where Azahar has no OpenGL
+  renderer and MultiMelon shows the 3DS screens in its own OpenGL window. An EmuWindow whose `WindowSystemType`
+  is `Headless` gets no surface and no swapchain: each frame is drawn as usual (RGBA, in the window's layout),
+  copied into memory and handed to the frontend's handler (`video_core/renderer_vulkan/vk_offscreen.h`) on the
+  thread that runs the core. On macOS, MoltenVK is also looked for in the app bundle's `Frameworks` folder.
+  A window with a surface works as before. `scripts/azahar-core.sh` builds the macOS core with 0001 and 0003;
+  `rig3ds` uses it with `RIG_RENDERER=vulkan` (a rig built from an Azahar build with Vulkan).

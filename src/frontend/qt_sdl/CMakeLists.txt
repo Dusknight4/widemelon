@@ -249,14 +249,40 @@ if (MULTIMELON_3DS)
     target_sources(melonDS PRIVATE ThreeDS.cpp ThreeDSNet.cpp ThreeDSRoom.cpp UdsLink.cpp RoomDialogs.cpp)
     target_compile_definitions(melonDS PRIVATE MULTIMELON_3DS)
     set(AZAHAR_EXT "${AZAHAR_SOURCE_DIR}/externals")
-    # (as Azahar compiles its own code: its headers, definitions and C++20)
+    # (as Azahar compiles its own code: its headers, definitions and C++20). The definitions must be the
+    # ones Azahar's core was built with (its headers' structures depend on some): azahar_libs.py takes them
+    # from that build (azahar-defines.txt); without the file, those of the Windows build (OpenGL, SDL2).
+    if (EXISTS "${AZAHAR_LIBS_DIR}/azahar-defines.txt")
+        file(STRINGS "${AZAHAR_LIBS_DIR}/azahar-defines.txt" AZAHAR_DEFINES)
+    else()
+        set(AZAHAR_DEFINES BOOST_ALL_NO_LIB BOOST_ASIO_DISABLE_CONCEPTS BOOST_DATE_TIME_NO_LIB BOOST_ERROR_CODE_HEADER_ONLY
+            BOOST_NO_CXX98_FUNCTION_BASE BOOST_REGEX_NO_LIB BOOST_SYSTEM_NO_LIB CITRA_HAS_SSE42 ENABLE_OPENGL ENABLE_SDL2
+            ENABLE_SOFTWARE_RENDERER HAVE_CUBEB MICROPROFILE_ENABLED=0 _FILE_OFFSET_BITS=64)
+    endif()
+    set(AZAHAR_OPTIONS -std=gnu++20)
+    if ("CITRA_HAS_SSE42" IN_LIST AZAHAR_DEFINES)
+        list(APPEND AZAHAR_OPTIONS -msse4.2)
+    endif()
     set_source_files_properties(ThreeDS.cpp ThreeDSNet.cpp ThreeDSRoom.cpp PROPERTIES
         INCLUDE_DIRECTORIES "${AZAHAR_BUILD_DIR}/src;${AZAHAR_SOURCE_DIR}/src;${AZAHAR_EXT}/boost;${AZAHAR_EXT}/fmt/include;${AZAHAR_EXT}/dynarmic/src;${AZAHAR_EXT}/microprofile;${AZAHAR_EXT}/dds-ktx;${AZAHAR_EXT}/glad/include"
-        COMPILE_DEFINITIONS "BOOST_ALL_NO_LIB;BOOST_ASIO_DISABLE_CONCEPTS;BOOST_DATE_TIME_NO_LIB;BOOST_ERROR_CODE_HEADER_ONLY;BOOST_NO_CXX98_FUNCTION_BASE;BOOST_REGEX_NO_LIB;BOOST_SYSTEM_NO_LIB;CITRA_HAS_SSE42;ENABLE_OPENGL;ENABLE_SDL2;ENABLE_SOFTWARE_RENDERER;HAVE_CUBEB;MICROPROFILE_ENABLED=0;_FILE_OFFSET_BITS=64"
-        COMPILE_OPTIONS "-std=gnu++20;-msse4.2")
+        COMPILE_DEFINITIONS "${AZAHAR_DEFINES}"
+        COMPILE_OPTIONS "${AZAHAR_OPTIONS}")
 
     file(STRINGS "${AZAHAR_LIBS_DIR}/azahar-libs.txt" AZAHAR_LIBS)
-    target_link_libraries(melonDS PRIVATE -Wl,--start-group ${AZAHAR_LIBS} -Wl,--end-group)
+    if (APPLE)
+        # (Apple's linker searches the libraries until nothing more is found: no group needed). Azahar's
+        # frameworks; MoltenVK, Vulkan on Metal, isn't linked: Azahar loads it at run time, from the app's
+        # Frameworks folder (patch 0003), where it's installed with the app.
+        target_link_libraries(melonDS PRIVATE ${AZAHAR_LIBS} "-framework Cocoa" "-framework AVFoundation"
+            "-framework IOSurface" "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation")
+        set(MULTIMELON_MOLTENVK "" CACHE FILEPATH "libMoltenVK.dylib, put into the app bundle")
+        if (MULTIMELON_MOLTENVK)
+            set_source_files_properties("${MULTIMELON_MOLTENVK}" PROPERTIES MACOSX_PACKAGE_LOCATION Frameworks)
+            target_sources(melonDS PRIVATE "${MULTIMELON_MOLTENVK}")
+        endif()
+    else()
+        target_link_libraries(melonDS PRIVATE -Wl,--start-group ${AZAHAR_LIBS} -Wl,--end-group)
+    endif()
     if (WIN32)
         target_link_libraries(melonDS PRIVATE winmm ws2_32 psapi imm32 version bcrypt crypt32 ole32 uuid avrt ksuser ssp)
     endif()
@@ -362,6 +388,15 @@ endif()
         ${CMAKE_SOURCE_DIR}/licenses/ENet-LICENSE
         ${CMAKE_SOURCE_DIR}/licenses/QRCodeGenerator-LICENSE
         DESTINATION ${WIDEMELON_DOC_DIR}/licenses)
+if (MULTIMELON_3DS)
+    # Azahar (GPLv2 or later; its source: github.com/azahar-emu/azahar, with patches/azahar), and on macOS
+    # MoltenVK (Apache 2.0)
+    install(FILES "${AZAHAR_SOURCE_DIR}/license.txt" DESTINATION ${WIDEMELON_DOC_DIR}/licenses RENAME azahar-gpl2.txt)
+    set(MULTIMELON_MOLTENVK_LICENSE "" CACHE FILEPATH "MoltenVK's LICENSE, installed with it")
+    if (MULTIMELON_MOLTENVK_LICENSE)
+        install(FILES "${MULTIMELON_MOLTENVK_LICENSE}" DESTINATION ${WIDEMELON_DOC_DIR}/licenses RENAME moltenvk-apache2.txt)
+    endif()
+endif()
 
 if (UNIX AND NOT APPLE)
     install(TARGETS melonDS BUNDLE DESTINATION ${CMAKE_BINARY_DIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

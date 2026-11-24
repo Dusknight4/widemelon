@@ -1,0 +1,324 @@
+--- a/src/video_core/renderer_vulkan/vk_platform.cpp
++++ b/src/video_core/renderer_vulkan/vk_platform.cpp
+@@ -110,7 +110,10 @@
+     if (!library->Load(filename)) {
+         // Fall back to directly loading bundled MoltenVK library.
+         const std::string mvk_filename = Common::DynamicLibrary::GetLibraryName("MoltenVK");
+-        void(library->Load(mvk_filename));
++        if (!library->Load(mvk_filename)) {
++            // MultiMelon: the MoltenVK in the app bundle's Frameworks folder
++            void(library->Load("@executable_path/../Frameworks/libMoltenVK.dylib"));
++        }
+     }
+ #else
+     std::string filename = Common::DynamicLibrary::GetLibraryName("vulkan", 1);
+@@ -130,6 +133,11 @@
+     vk::SurfaceKHR surface{};
+     vk::Result res;
+ 
++    // MultiMelon: no window, no surface (frames are drawn offscreen, vk_offscreen.h)
++    if (window_info.type == Frontend::WindowSystemType::Headless) {
++        return surface;
++    }
++
+ #if defined(VK_USE_PLATFORM_WIN32_KHR)
+     if (window_info.type == Frontend::WindowSystemType::Windows) {
+         const vk::Win32SurfaceCreateInfoKHR win32_ci = {
+--- a/src/video_core/renderer_vulkan/vk_present_window.cpp
++++ b/src/video_core/renderer_vulkan/vk_present_window.cpp
+@@ -7,6 +7,7 @@
+ #include "common/thread.h"
+ #include "core/frontend/emu_window.h"
+ #include "video_core/renderer_vulkan/vk_instance.h"
++#include "video_core/renderer_vulkan/vk_offscreen.h"
+ #include "video_core/renderer_vulkan/vk_platform.h"
+ #include "video_core/renderer_vulkan/vk_present_window.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+@@ -20,6 +21,17 @@
+ namespace Vulkan {
+ 
+ namespace {
++// MultiMelon: where offscreen frames go (vk_offscreen.h)
++std::mutex offscreen_mutex;
++OffscreenFrameHandler offscreen_handler;
++} // Anonymous namespace
++
++void SetOffscreenFrameHandler(OffscreenFrameHandler handler) {
++    std::scoped_lock lock{offscreen_mutex};
++    offscreen_handler = std::move(handler);
++}
++
++namespace {
+ 
+ bool CanBlitToSwapchain(const vk::PhysicalDevice& physical_device, vk::Format format) {
+     const vk::FormatProperties props{physical_device.getFormatProperties(format)};
+@@ -108,7 +120,8 @@
+       vsync_enabled{Settings::values.use_vsync.GetValue()},
+       blit_supported{
+           CanBlitToSwapchain(instance.GetPhysicalDevice(), swapchain.GetSurfaceFormat().format)},
+-      use_present_thread{Settings::values.async_presentation.GetValue()},
++      // (MultiMelon: offscreen, each frame goes to memory on the presenting thread itself)
++      use_present_thread{surface && Settings::values.async_presentation.GetValue()},
+       last_render_surface{emu_window.GetWindowInfo().render_surface} {
+ 
+     const u32 num_images = swapchain.GetImageCount();
+@@ -165,6 +178,9 @@
+     device.destroyCommandPool(command_pool);
+     device.destroyRenderPass(present_renderpass);
+     for (auto& frame : swap_chain) {
++        if (frame.readback) {
++            vmaDestroyBuffer(instance.GetAllocator(), frame.readback, frame.readback_allocation);
++        }
+         device.destroyImageView(frame.image_view);
+         device.destroyFramebuffer(frame.framebuffer);
+         device.destroySemaphore(frame.render_ready);
+@@ -371,6 +387,11 @@
+ }
+ 
+ void PresentWindow::CopyToSwapchain(Frame* frame) {
++    if (!surface) {
++        CopyToHost(frame);
++        return;
++    }
++
+     const auto recreate_swapchain = [&] {
+ #ifdef ANDROID
+         {
+@@ -512,6 +533,115 @@
+     swapchain.Present();
+ }
+ 
++void PresentWindow::CopyToHost(Frame* frame) {
++    const vk::Device device = instance.GetDevice();
++    const u32 stride = frame->width * 4;
++    const u32 size = stride * frame->height;
++    if (frame->readback_size != size) {
++        if (frame->readback) {
++            vmaDestroyBuffer(instance.GetAllocator(), frame->readback, frame->readback_allocation);
++            frame->readback = vk::Buffer{};
++        }
++        const VkBufferCreateInfo buffer_info = {
++            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++            .size = size,
++            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++        };
++        const VmaAllocationCreateInfo alloc_info = {
++            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
++                     VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
++            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
++        };
++        VkBuffer buffer{};
++        VmaAllocationInfo info{};
++        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_info, &alloc_info, &buffer,
++                            &frame->readback_allocation, &info) != VK_SUCCESS) [[unlikely]] {
++            LOG_CRITICAL(Render_Vulkan, "Failed allocating the offscreen frame's memory");
++            UNREACHABLE();
++        }
++        frame->readback = vk::Buffer{buffer};
++        frame->readback_pixels = static_cast<u8*>(info.pMappedData);
++        frame->readback_size = size;
++    }
++
++    const vk::CommandBuffer cmdbuf = frame->cmdbuf;
++    cmdbuf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
++
++    // (the frame is in TransferSrcOptimal after its render pass)
++    const vk::ImageMemoryBarrier image_barrier{
++        .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
++        .dstAccessMask = vk::AccessFlagBits::eTransferRead,
++        .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
++        .newLayout = vk::ImageLayout::eTransferSrcOptimal,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .image = frame->image,
++        .subresourceRange{
++            .aspectMask = vk::ImageAspectFlagBits::eColor,
++            .baseMipLevel = 0,
++            .levelCount = 1,
++            .baseArrayLayer = 0,
++            .layerCount = 1,
++        },
++    };
++    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
++                           vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlagBits::eByRegion,
++                           {}, {}, image_barrier);
++
++    const vk::BufferImageCopy region{
++        .bufferOffset = 0,
++        .bufferRowLength = 0,
++        .bufferImageHeight = 0,
++        .imageSubresource = MakeImageSubresourceLayers(),
++        .imageOffset = {0, 0, 0},
++        .imageExtent = {frame->width, frame->height, 1},
++    };
++    cmdbuf.copyImageToBuffer(frame->image, vk::ImageLayout::eTransferSrcOptimal, frame->readback,
++                             region);
++
++    const vk::BufferMemoryBarrier buffer_barrier{
++        .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
++        .dstAccessMask = vk::AccessFlagBits::eHostRead,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .buffer = frame->readback,
++        .offset = 0,
++        .size = VK_WHOLE_SIZE,
++    };
++    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eHost,
++                           vk::DependencyFlags{}, {}, buffer_barrier, {});
++    cmdbuf.end();
++
++    static constexpr vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eTransfer;
++    const vk::SubmitInfo submit_info = {
++        .waitSemaphoreCount = 1,
++        .pWaitSemaphores = &frame->render_ready,
++        .pWaitDstStageMask = &wait_stage,
++        .commandBufferCount = 1u,
++        .pCommandBuffers = &cmdbuf,
++    };
++    {
++        std::scoped_lock submit_lock{scheduler.submit_mutex};
++        try {
++            graphics_queue.submit(submit_info, frame->present_done);
++        } catch (vk::DeviceLostError& err) {
++            LOG_CRITICAL(Render_Vulkan, "Device lost during offscreen copy: {}", err.what());
++            UNREACHABLE();
++        }
++    }
++
++    // (the fence stays signalled for GetRenderFrame, which resets it)
++    while (device.waitForFences(frame->present_done, false, std::numeric_limits<u64>::max()) ==
++           vk::Result::eTimeout) {
++    }
++    vmaInvalidateAllocation(instance.GetAllocator(), frame->readback_allocation, 0, VK_WHOLE_SIZE);
++
++    std::scoped_lock lock{offscreen_mutex};
++    if (offscreen_handler) {
++        offscreen_handler(frame->readback_pixels, frame->width, frame->height, stride);
++    }
++}
++
+ vk::RenderPass PresentWindow::CreateRenderpass() {
+     const vk::AttachmentReference color_ref = {
+         .attachment = 0,
+--- a/src/video_core/renderer_vulkan/vk_present_window.h
++++ b/src/video_core/renderer_vulkan/vk_present_window.h
+@@ -32,6 +32,11 @@
+     vk::Semaphore render_ready;
+     vk::Fence present_done;
+     vk::CommandBuffer cmdbuf;
++    // MultiMelon: offscreen, the frame's pixels copied to memory (vk_offscreen.h)
++    vk::Buffer readback{};
++    VmaAllocation readback_allocation{};
++    u8* readback_pixels{};
++    u32 readback_size{};
+ };
+ 
+ class PresentWindow final {
+@@ -72,6 +77,9 @@
+ 
+     void CopyToSwapchain(Frame* frame);
+ 
++    /// MultiMelon: offscreen, the frame into memory for the frontend (vk_offscreen.h)
++    void CopyToHost(Frame* frame);
++
+     vk::RenderPass CreateRenderpass();
+ 
+ private:
+--- a/src/video_core/renderer_vulkan/vk_swapchain.cpp
++++ b/src/video_core/renderer_vulkan/vk_swapchain.cpp
+@@ -25,7 +25,9 @@
+ 
+ Swapchain::~Swapchain() {
+     Destroy();
+-    instance.GetInstance().destroySurfaceKHR(surface);
++    if (surface) {
++        instance.GetInstance().destroySurfaceKHR(surface);
++    }
+ }
+ 
+ void Swapchain::Create(u32 width_, u32 height_, vk::SurfaceKHR surface_, bool low_refresh_rate_) {
+@@ -37,6 +39,13 @@
+ 
+     Destroy();
+ 
++    // MultiMelon: offscreen (no surface): no swapchain, only the size and the frames' count
++    if (!surface) {
++        extent = vk::Extent2D{width, height};
++        image_count = 3;
++        return;
++    }
++
+     SetPresentMode();
+     if (needs_recreation) {
+         return;
+@@ -145,6 +154,13 @@
+ }
+ 
+ void Swapchain::FindPresentFormat() {
++    // MultiMelon: offscreen, frames are RGBA (as the frontend takes them, vk_offscreen.h)
++    if (!surface) {
++        surface_format.format = vk::Format::eR8G8B8A8Unorm;
++        surface_format.colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear;
++        return;
++    }
++
+     const auto formats = instance.GetPhysicalDevice().getSurfaceFormatsKHR(surface);
+ 
+     // If there is a single undefined surface format, the device doesn't care, so we'll just use
+@@ -171,6 +187,11 @@
+ }
+ 
+ void Swapchain::SetPresentMode() {
++    if (!surface) {
++        present_mode = vk::PresentModeKHR::eImmediate;
++        return;
++    }
++
+     std::vector<vk::PresentModeKHR> modes;
+     try {
+         modes = instance.GetPhysicalDevice().getSurfacePresentModesKHR(surface);
+@@ -264,9 +285,12 @@
+         device.destroySwapchainKHR(swapchain);
+         swapchain = VK_NULL_HANDLE;
+     }
+-    for (u32 i = 0; i < image_count; i++) {
+-        device.destroySemaphore(image_acquired[i]);
+-        device.destroySemaphore(present_ready[i]);
++    // (MultiMelon: the semaphores made, none offscreen)
++    for (const vk::Semaphore semaphore : image_acquired) {
++        device.destroySemaphore(semaphore);
++    }
++    for (const vk::Semaphore semaphore : present_ready) {
++        device.destroySemaphore(semaphore);
+     }
+     image_acquired.clear();
+     present_ready.clear();
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/vk_offscreen.h
+@@ -0,0 +1,26 @@
++// Copyright 2026 WideMelon contributors
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++// MultiMelon: the Vulkan renderer without a window. When the EmuWindow's WindowSystemType is
++// Headless there is no surface and no swapchain: each frame is drawn as usual (in the window's
++// framebuffer layout), then copied into memory and handed to the handler set here, on the
++// thread that presents (the one running the core). MultiMelon shows the frames in its own
++// OpenGL window this way on macOS, where Azahar has no OpenGL renderer.
++
++#pragma once
++
++#include <functional>
++#include "common/common_types.h"
++
++namespace Vulkan {
++
++/// pixels: RGBA8, row 0 the top of the layout, `stride` bytes from one row to the next; only
++/// valid during the call
++using OffscreenFrameHandler =
++    std::function<void(const u8* pixels, u32 width, u32 height, u32 stride)>;
++
++/// (an empty handler drops the frames)
++void SetOffscreenFrameHandler(OffscreenFrameHandler handler);
++
++} // namespace Vulkan

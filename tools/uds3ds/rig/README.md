@@ -258,7 +258,7 @@ Environment variables:
 
 | Variable | Meaning |
 |---|---|
-| `RIG_RENDERER` | `opengl` (default; falls back to software without OpenGL 4.3) or `software` |
+| `RIG_RENDERER` | `opengl` (default; falls back to software without OpenGL 4.3), `software`, or `vulkan` (offscreen, as MultiMelon on macOS; only in a rig built from an Azahar build with Vulkan: `AZ_BUILD=... build.sh`) |
 | `RIG_SPEED` | percent of a 3DS's speed (default 100; 0 = no limit) |
 | `RIG_LINK_PORT`, `RIG_LINK_PORTS` | the link's UDP port (default 7072), and how many ports from there it may take (default 1; MultiMelon uses 4) |
 | `RIG_LINK_PEERS` | `ip:port,...`: hellos go there instead of by broadcast |

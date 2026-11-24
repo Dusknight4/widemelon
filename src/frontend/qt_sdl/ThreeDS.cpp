@@ -20,6 +20,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -42,10 +43,19 @@
 #include "core/loader/loader.h"
 #include "video_core/gpu.h"
 #include "video_core/renderer_base.h"
-#include "video_core/renderer_opengl/gl_state.h"
 
+// Azahar draws with OpenGL (Windows) or Vulkan (macOS, where Azahar has no OpenGL renderer), as its
+// core was built (ENABLE_OPENGL, ENABLE_VULKAN). With Vulkan it draws offscreen (patch 0003,
+// vk_offscreen.h) and hands each frame over in memory; CopyScreens puts it into the same texture.
+#ifdef ENABLE_OPENGL
+#include "video_core/renderer_opengl/gl_state.h"
 // Azahar's GL loader, as renamed when its libraries are linked in
 extern "C" int az_gladLoadGL(void);
+#endif
+#ifdef ENABLE_VULKAN
+#include <mutex>
+#include "video_core/renderer_vulkan/vk_offscreen.h"
+#endif
 
 namespace ThreeDS
 {
@@ -56,8 +66,43 @@ namespace
 Input g_input;          // this frame's, read by the input devices below
 int g_resolution = 2;
 bool g_running = false;
-bool g_glLoaded = false;
 std::string g_gamePath;     // what was started (a CIA's installed game, not the CIA)
+
+// which of Azahar's renderers draws: OpenGL where it was built (MULTIMELON_3DS_RENDERER=vulkan picks
+// Vulkan when both were), else Vulkan
+#if defined(ENABLE_OPENGL) && defined(ENABLE_VULKAN)
+const bool g_vulkan = [] {
+    const char* r = std::getenv("MULTIMELON_3DS_RENDERER");
+    return r && std::string(r) == "vulkan";
+}();
+#elif defined(ENABLE_VULKAN)
+constexpr bool g_vulkan = true;
+#else
+constexpr bool g_vulkan = false;
+#endif
+
+#ifdef ENABLE_OPENGL
+bool g_glLoaded = false;
+#endif
+
+#ifdef ENABLE_VULKAN
+// the newest frame Vulkan drew (RGBA, Azahar's layout: top screen above the touchscreen)
+std::mutex g_frameLock;
+std::vector<u8> g_frame;
+u32 g_frameW = 0, g_frameH = 0;
+bool g_frameNew = false;
+
+void TakeFrame(const u8* pixels, u32 width, u32 height, u32 stride)
+{
+    std::scoped_lock lock(g_frameLock);
+    g_frame.resize((size_t)width * height * 4);
+    for (u32 y = 0; y < height; y++)
+        std::memcpy(g_frame.data() + (size_t)y * width * 4, pixels + (size_t)y * stride, (size_t)width * 4);
+    g_frameW = width;
+    g_frameH = height;
+    g_frameNew = true;
+}
+#endif
 
 class Button final : public ::Input::ButtonDevice
 {
@@ -99,14 +144,15 @@ public:
     }
 };
 
-// Azahar draws into a framebuffer of ours, top screen above the touchscreen
+// Azahar draws into a framebuffer of ours (OpenGL) or offscreen (Vulkan: no window of its own), top
+// screen above the touchscreen
 class Window final : public Frontend::EmuWindow
 {
 public:
     Window()
     {
-        strict_context_required = true;
-        window_info.type = Frontend::WindowSystemType::Windows;
+        strict_context_required = !g_vulkan;
+        window_info.type = g_vulkan ? Frontend::WindowSystemType::Headless : Frontend::WindowSystemType::Windows;
     }
 
     void PollEvents() override { FrameEnded = true; }   // (once a frame, from the renderer's EndFrame)
@@ -128,32 +174,39 @@ public:
 
 std::unique_ptr<Window> g_window;
 
-// our framebuffer (what TryPresent draws into) and the 2-layer texture the panel shows
+// our framebuffer (what TryPresent draws into, OpenGL only) and the 2-layer texture the panel shows
 GLuint g_fbo = 0, g_fboTex = 0, g_copyFbo = 0, g_screens = 0;
 int g_fboW = 0, g_fboH = 0, g_texW = 0, g_texH = 0;
 
 void MakeTargets()
 {
-    if (g_fbo && g_fboW == g_window->Width && g_fboH == g_window->Height) return;
-    if (!g_fbo) { glGenFramebuffers(1, &g_fbo); glGenFramebuffers(1, &g_copyFbo); glGenTextures(1, &g_fboTex); glGenTextures(1, &g_screens); }
-    g_fboW = g_window->Width;
-    g_fboH = g_window->Height;
-    glBindTexture(GL_TEXTURE_2D, g_fboTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g_fboW, g_fboH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_fboTex, 0);
+    const int w = g_window->Width, h = g_window->Height;
+    if (g_screens && g_texW == w && g_texH == h / 2) return;
+    if (!g_screens) glGenTextures(1, &g_screens);
+    if (!g_vulkan)
+    {
+        if (!g_fbo) { glGenFramebuffers(1, &g_fbo); glGenFramebuffers(1, &g_copyFbo); glGenTextures(1, &g_fboTex); }
+        g_fboW = w;
+        g_fboH = h;
+        glBindTexture(GL_TEXTURE_2D, g_fboTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g_fboW, g_fboH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_fboTex, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
 
-    g_texW = g_fboW;
-    g_texH = g_fboH / 2;
+    g_texW = w;
+    g_texH = h / 2;
     glBindTexture(GL_TEXTURE_2D_ARRAY, g_screens);
     glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, g_texW, g_texH, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 }
 
+#ifdef ENABLE_OPENGL
 // GL state as Azahar left it, put back before each frame. Azahar keeps its own copy of the GL
 // state (OpenGLState::cur_state) and only sends what differs from it, so the real state must
 // match that copy whenever Azahar runs: DefaultGLState() makes both the defaults (the copy's
@@ -194,11 +247,36 @@ void DefaultGLState()
         glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
     }
 }
+#endif
+
+// around Azahar's work on our thread: its GL state back as it had it, then ours again (nothing to
+// do with Vulkan, which doesn't touch our GL context)
+void EnterAzahar()
+{
+#ifdef ENABLE_OPENGL
+    if (!g_vulkan)
+    {
+        DefaultGLState();
+        g_azaharState.Apply();
+    }
+#endif
+}
+
+void LeaveAzahar()
+{
+#ifdef ENABLE_OPENGL
+    if (!g_vulkan)
+    {
+        g_azaharState = OpenGL::OpenGLState::GetCurState();
+        DefaultGLState();
+    }
+#endif
+}
 
 void SetupSettings()
 {
     auto& v = Settings::values;
-    v.graphics_api = Settings::GraphicsAPI::OpenGL;
+    v.graphics_api = g_vulkan ? Settings::GraphicsAPI::Vulkan : Settings::GraphicsAPI::OpenGL;
     v.use_gles = false;
     v.resolution_factor = (u32)g_resolution;
     v.layout_option = Settings::LayoutOption::Default;
@@ -344,11 +422,21 @@ std::string Load(const std::string& path)
             if (!err.empty()) return err;
         }
     }
-    if (!g_glLoaded)
+#ifdef ENABLE_OPENGL
+    if (!g_vulkan && !g_glLoaded)
     {
         if (!az_gladLoadGL()) return "OpenGL 4.3 is needed for 3DS games.";
         g_glLoaded = true;
     }
+#endif
+#ifdef ENABLE_VULKAN
+    if (g_vulkan)
+    {
+        Vulkan::SetOffscreenFrameHandler(TakeFrame);
+        std::scoped_lock lock(g_frameLock);
+        g_frameNew = false;
+    }
+#endif
 
     SetupSettings();
     if (!g_window) g_window = std::make_unique<Window>();
@@ -359,10 +447,23 @@ std::string Load(const std::string& path)
 
     auto& system = Core::System::GetInstance();
     system.ApplySettings();
-    g_azaharState = OpenGL::OpenGLState{};
-    const auto result = system.Load(*g_window, gamePath);
-    g_azaharState = OpenGL::OpenGLState::GetCurState();
-    DefaultGLState();
+#ifdef ENABLE_OPENGL
+    if (!g_vulkan) g_azaharState = OpenGL::OpenGLState{};
+#endif
+    Core::System::ResultStatus result;
+    try
+    {
+        result = system.Load(*g_window, gamePath);
+    }
+    catch (const std::exception& e)
+    {
+        // (Vulkan with no driver, or a GPU without what Azahar needs, throws as the renderer starts)
+        LeaveAzahar();
+        try { system.Shutdown(); } catch (...) {}
+        return std::string(g_vulkan ? "3DS games need Vulkan (on a Mac: Metal, through MoltenVK): " : "The 3DS renderer couldn't start: ")
+             + e.what();
+    }
+    LeaveAzahar();
 
     using R = Core::System::ResultStatus;
     switch (result)
@@ -398,8 +499,7 @@ bool SaveState(const std::string& path)
 {
     if (!g_running) return false;
     auto& system = Core::System::GetInstance();
-    DefaultGLState();
-    g_azaharState.Apply();
+    EnterAzahar();
     bool ok = false;
     try
     {
@@ -414,8 +514,7 @@ bool SaveState(const std::string& path)
     {
         LOG_ERROR(Frontend, "savestate: {}", e.what());
     }
-    g_azaharState = OpenGL::OpenGLState::GetCurState();
-    DefaultGLState();
+    LeaveAzahar();
     return ok;
 }
 
@@ -430,8 +529,7 @@ bool LoadState(const std::string& path)
         if (state.empty() || file.ReadBytes(state.data(), state.size()) != state.size()) return false;
     }
     auto& system = Core::System::GetInstance();
-    DefaultGLState();
-    g_azaharState.Apply();
+    EnterAzahar();
     bool ok = false;
     try
     {
@@ -441,8 +539,7 @@ bool LoadState(const std::string& path)
     {
         LOG_ERROR(Frontend, "savestate: {}", e.what());
     }
-    g_azaharState = OpenGL::OpenGLState::GetCurState();
-    DefaultGLState();
+    LeaveAzahar();
     return ok;
 }
 
@@ -450,10 +547,9 @@ void Unload()
 {
     if (!g_running) return;
     g_running = false;
-    DefaultGLState();
-    g_azaharState.Apply();
+    EnterAzahar();
     Core::System::GetInstance().Shutdown();
-    DefaultGLState();
+    LeaveAzahar();
 }
 
 bool Running() { return g_running; }
@@ -481,8 +577,7 @@ void RunFrame(const Input& input)
 
     // Azahar's GL state back as it had it, then the core until the frame ends (it paces
     // itself to the 3DS's frame rate)
-    DefaultGLState();
-    g_azaharState.Apply();
+    EnterAzahar();
     auto& system = Core::System::GetInstance();
     g_window->FrameEnded = false;
     for (int slices = 0; slices < 100000 && !g_window->FrameEnded; slices++)
@@ -493,15 +588,42 @@ void RunFrame(const Input& input)
             break;
         }
     }
-    g_azaharState = OpenGL::OpenGLState::GetCurState();
-    DefaultGLState();
+    LeaveAzahar();
 }
 
 unsigned CopyScreens()
 {
     if (!g_window) return 0;
     MakeTargets();
+    const auto& layout = g_window->GetFramebufferLayout();
 
+#ifdef ENABLE_VULKAN
+    if (g_vulkan)
+    {
+        // the newest frame (in memory, row 0 the top) straight into the layers: each screen the right way up
+        std::scoped_lock lock(g_frameLock);
+        if (g_frameNew && g_frameW == layout.width && g_frameH == layout.height)
+        {
+            glBindTexture(GL_TEXTURE_2D_ARRAY, g_screens);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)g_frameW);
+            auto upload = [&](const Common::Rectangle<u32>& r, int layer, int dstX) {
+                const int w = std::min((int)r.GetWidth(), g_texW - dstX), h = std::min((int)r.GetHeight(), g_texH);
+                if (w <= 0 || h <= 0 || r.right > g_frameW || r.bottom > g_frameH) return;
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, dstX, 0, layer, w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                g_frame.data() + ((size_t)r.top * g_frameW + r.left) * 4);
+            };
+            upload(layout.top_screen, 0, 0);
+            upload(layout.bottom_screen, 1, (g_texW - (int)layout.bottom_screen.GetWidth()) / 2);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+            g_frameNew = false;
+        }
+        return g_screens;
+    }
+#endif
+
+#ifdef ENABLE_OPENGL
     // the newest frame into our framebuffer
     DefaultGLState();
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_fbo);
@@ -510,7 +632,6 @@ unsigned CopyScreens()
     DefaultGLState();
 
     // each screen into its layer, the right way up (row 0 the top, as the panel's textures)
-    const auto& layout = g_window->GetFramebufferLayout();
     auto copy = [&](const Common::Rectangle<u32>& r, int layer, int dstX) {
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_copyFbo);
         glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, g_screens, 0, layer);
@@ -522,6 +643,7 @@ unsigned CopyScreens()
     copy(layout.top_screen, 0, 0);
     copy(layout.bottom_screen, 1, (g_texW - (int)layout.bottom_screen.GetWidth()) / 2);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+#endif
     return g_screens;
 }
 

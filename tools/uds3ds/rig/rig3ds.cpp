@@ -13,7 +13,9 @@
 //      RIG_CMD=file: more commands, one per line, read while it runs (appended lines are picked up):
 //        a keys script as above | shot NAME (a PNG of both screens) | touch X Y FRAMES (bottom screen) | quit
 //      RIG_SHOTS=folder (where shots go; default USERDIR/shots), RIG_SHOT_EVERY=seconds (shots by themselves)
-//      RIG_RENDERER=opengl (default) | software, RIG_SPEED=percent of the 3DS's speed (default 100; 0 = no limit)
+//      RIG_RENDERER=opengl (default) | software | vulkan (offscreen, as MultiMelon on macOS; a rig built with
+//      Vulkan: build.sh with AZ_BUILD=<Azahar build with ENABLE_VULKAN>),
+//      RIG_SPEED=percent of the 3DS's speed (default 100; 0 = no limit)
 //      a rough link (on what this console sends; see UdsLink::Impairment): RIG_LINK_LOSS=percent,
 //      RIG_LINK_BURST=datagrams a loss burst lasts on average, RIG_LINK_DELAY_MS, RIG_LINK_JITTER_MS, RIG_LINK_DUP=percent,
 //      RIG_LINK_REORDER=1, RIG_LINK_SEED; while running, the command "link loss=5 delay=40 ..." (or "link off");
@@ -54,6 +56,10 @@ extern "C" __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned
 #include "video_core/renderer_base.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_software/renderer_software.h"
+#ifdef ENABLE_VULKAN
+#include <mutex>
+#include "video_core/renderer_vulkan/vk_offscreen.h"
+#endif
 
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -300,10 +306,35 @@ std::string DescribeLink(const UdsLink::Impairment& i)
     return buf;
 }
 
+#ifdef ENABLE_VULKAN
+// RIG_RENDERER=vulkan: Azahar's Vulkan renderer offscreen (patch 0003, as MultiMelon on macOS); its newest frame
+bool g_vulkan = false;
+std::mutex g_vkLock;
+std::vector<unsigned char> g_vkFrame;
+unsigned g_vkW = 0, g_vkH = 0;
+
+void TakeVulkanFrame(const u8* pixels, u32 width, u32 height, u32 stride)
+{
+    std::scoped_lock lock(g_vkLock);
+    g_vkFrame.resize((size_t)width * height * 4);
+    for (u32 y = 0; y < height; y++)
+        std::memcpy(g_vkFrame.data() + (size_t)y * width * 4, pixels + (size_t)y * stride, (size_t)width * 4);
+    g_vkW = width;
+    g_vkH = height;
+}
+#endif
+
 // both screens, the top one above the bottom one (centred), as a PNG
 bool SaveShot(const std::string& path)
 {
     const unsigned W = 400, H = 480;
+#ifdef ENABLE_VULKAN
+    if (g_vulkan)
+    {
+        std::scoped_lock lock(g_vkLock);
+        return g_vkW == W && g_vkH == H && lodepng_encode32_file(path.c_str(), g_vkFrame.data(), W, H) == 0;
+    }
+#endif
     auto* sw = dynamic_cast<SwRenderer::RendererSoftware*>(&Core::System::GetInstance().GPU().Renderer());
     if (!sw)
     {
@@ -376,11 +407,24 @@ int main(int argc, char** argv)
     Settings::values.current_input_profile.touch_device = "engine:emu_window";
 
     const char* rendererName = std::getenv("RIG_RENDERER");
+#ifdef ENABLE_VULKAN
+    g_vulkan = rendererName && std::string(rendererName) == "vulkan";
+    if (g_vulkan)
+    {
+        Vulkan::SetOffscreenFrameHandler(TakeVulkanFrame);
+        std::printf("renderer: Vulkan, offscreen\n");
+    }
+    const bool wantGL = !g_vulkan && (!rendererName || std::string(rendererName) != "software");
+#else
     const bool wantGL = !rendererName || std::string(rendererName) != "software";
+#endif
     const bool gl = wantGL && StartGL();
     if (wantGL && !gl) std::printf("renderer: no OpenGL 4.3 here, so the software renderer (slow)\n");
-    else if (!gl) std::printf("renderer: software (slow)\n");
+    else if (!gl && !(rendererName && std::string(rendererName) == "vulkan")) std::printf("renderer: software (slow)\n");
     Settings::values.graphics_api = gl ? Settings::GraphicsAPI::OpenGL : Settings::GraphicsAPI::Software;
+#ifdef ENABLE_VULKAN
+    if (g_vulkan) Settings::values.graphics_api = Settings::GraphicsAPI::Vulkan;
+#endif
     Settings::values.use_gles = false;
     Settings::values.use_vsync = false;
     Settings::values.resolution_factor = 1;

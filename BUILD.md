@@ -136,6 +136,34 @@ HarfBuzz statically through pkg-config instead of through its DLL. This build
 uses Qt's Windows Media Foundation backend for cameras instead of FFmpeg. The
 portable executable keeps its settings and saves in its own folder.
 
+### 3DS games (Azahar's core)
+
+MultiMelon plays 3DS games with [Azahar](https://github.com/azahar-emu/azahar)'s
+emulation core, built on its own and linked in (`-DMULTIMELON_3DS=ON`; off by
+default). The steps:
+
+1. Azahar's unified source, release 2126.2, with `patches/azahar` applied
+   (see its README): 0001 on every system, 0003 for Vulkan without a window.
+2. Its core libraries only: configure with `-DENABLE_QT=OFF`,
+   `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and the renderer (Windows: OpenGL, the
+   default; macOS: `-DENABLE_VULKAN=ON`, as Azahar has no OpenGL renderer
+   there), then build `citra_core video_core audio_core input_common network
+   citra_common`. `scripts/azahar-core.sh` does all of this on macOS.
+3. A MultiMelon build without the 3DS core, then `tools/azahar_libs.py`: it
+   copies Azahar's libraries with their names changed where they clash with
+   MultiMelon's (both bundle teakra, glad, enet, zstd...), and writes the
+   definitions Azahar was compiled with. On macOS pass `--macho` and LLVM's
+   `llvm-nm`, `llvm-objcopy` and `llvm-ar`, with `--ranlib ranlib`.
+4. Configure MultiMelon again with `-DMULTIMELON_3DS=ON`,
+   `-DAZAHAR_SOURCE_DIR`, `-DAZAHAR_BUILD_DIR` and `-DAZAHAR_LIBS_DIR` (the
+   script's `--out`), and on macOS `-DMULTIMELON_MOLTENVK=` Azahar's
+   `libMoltenVK.dylib`, which goes into the app's `Frameworks` folder.
+
+The release workflow does steps 2-4 for both Macs. With Vulkan, Azahar draws
+each frame offscreen and MultiMelon shows it in its OpenGL window (patch 0003).
+A Windows build whose Azahar has both renderers uses OpenGL unless
+`MULTIMELON_3DS_RENDERER=vulkan` is set.
+
 ## Phone screen and controller
 
 The phone bridge is frontend-only and starts only after an explicit action. It

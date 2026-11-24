@@ -15,6 +15,11 @@ on:
         required: true
         type: boolean
         default: false
+      macos_only:
+        description: Build only the macOS packages (a test build; nothing is published)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
+      native: ${{ steps.version.outputs.native }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -37,6 +43,7 @@ jobs:
         env:
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
           PUBLISH_AUR: ${{ inputs.publish_aur }}
+          MACOS_ONLY: ${{ inputs.macos_only }}
         run: |
           set -euo pipefail
           version=$(sed -n 's/^set(WIDEMELON_VERSION "\([0-9.]*\)")/\1/p' CMakeLists.txt)
@@ -44,6 +51,18 @@ jobs:
           if [[ "$PUBLISH_RELEASE" == true && "$PUBLISH_AUR" == true ]]; then
             echo "publish_release and publish_aur are mutually exclusive." >&2
             exit 1
+          fi
+          if [[ "$MACOS_ONLY" == true && ( "$PUBLISH_RELEASE" == true || "$PUBLISH_AUR" == true ) ]]; then
+            echo "macos_only builds are tests: nothing can be published from them." >&2
+            exit 1
+          fi
+          windows='{"platform":"windows-x86_64","runner":"windows-2025","preset":"release-windows-x86_64","triplet":"x64-windows-static-release","release_asset":"Windows-x86_64.exe"}'
+          mac_x86_64='{"platform":"macos-x86_64","runner":"macos-15-intel","preset":"release-mac-x86_64","triplet":"x64-osx-13-release","release_asset":"macOS-x86_64.dmg","arch":"x86_64"}'
+          mac_arm64='{"platform":"macos-arm64","runner":"macos-15","preset":"release-mac-arm64","triplet":"arm64-osx-13-release","release_asset":"macOS-arm64.dmg","arch":"arm64"}'
+          if [[ "$MACOS_ONLY" == true ]]; then
+            echo "native=[$mac_x86_64,$mac_arm64]" >> "$GITHUB_OUTPUT"
+          else
+            echo "native=[$windows,$mac_x86_64,$mac_arm64]" >> "$GITHUB_OUTPUT"
           fi
           if [[ "$PUBLISH_RELEASE" == true ]]; then
             [[ "$GITHUB_REF" == refs/heads/main ]]
@@ -60,7 +79,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   linux:
-    if: ${{ !inputs.publish_aur }}
+    if: ${{ !inputs.publish_aur && !inputs.macos_only }}
     needs: version
     uses: ./.github/workflows/package-linux.yml
     with:
@@ -74,22 +93,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: windows-x86_64
-            runner: windows-2025
-            preset: release-windows-x86_64
-            triplet: x64-windows-static-release
-            release_asset: Windows-x86_64.exe
-          - platform: macos-x86_64
-            runner: macos-15-intel
-            preset: release-mac-x86_64
-            triplet: x64-osx-13-release
-            release_asset: macOS-x86_64.dmg
-          - platform: macos-arm64
-            runner: macos-15
-            preset: release-mac-arm64
-            triplet: arm64-osx-13-release
-            release_asset: macOS-arm64.dmg
+        # (from the version job: Windows and both Macs, or with macos_only the Macs)
+        include: ${{ fromJSON(needs.version.outputs.native) }}
     runs-on: ${{ matrix.runner }}
     env:
       # Cached installs are only restored together with their source downloads.
@@ -207,6 +212,52 @@ jobs:
           key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: Build application
         run: cmake --build build/native --parallel 3
+      # 3DS games (MULTIMELON_3DS) on macOS: Azahar's core, built with its Vulkan renderer (MoltenVK), its
+      # libraries renamed where they clash with MultiMelon's (tools/azahar_libs.py, from the build above),
+      # then the application built again with them. (Windows releases use the MinGW build, see BUILDING.md.)
+      - name: Restore Azahar's core
+        if: startsWith(matrix.platform, 'macos-')
+        id: azahar
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/azahar
+          key: azahar-2126.2-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('scripts/azahar-core.sh', 'patches/azahar/0001-uds-link.patch', 'patches/azahar/0003-vulkan-offscreen.patch') }}
+      - name: Build Azahar's core
+        if: startsWith(matrix.platform, 'macos-') && steps.azahar.outputs.cache-hit != 'true'
+        run: bash scripts/azahar-core.sh "$RUNNER_TEMP/azahar" "${{ matrix.arch }}"
+      - name: Save Azahar's core
+        if: startsWith(matrix.platform, 'macos-') && steps.azahar.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/azahar
+          key: ${{ steps.azahar.outputs.cache-primary-key }}
+      - name: Build application with 3DS games
+        if: startsWith(matrix.platform, 'macos-')
+        run: |
+          set -euo pipefail
+          llvm=""
+          for formula in llvm@18 llvm@19 llvm@20 llvm; do
+            prefix=$(brew --prefix "$formula" 2>/dev/null || true)
+            if [[ -n "$prefix" && -x "$prefix/bin/llvm-objcopy" ]]; then llvm=$prefix; break; fi
+          done
+          if [[ -z "$llvm" ]]; then
+            brew install llvm
+            llvm=$(brew --prefix llvm)
+          fi
+          echo "LLVM tools: $llvm"
+          az="$RUNNER_TEMP/azahar"
+          python tools/azahar_libs.py --macho --mm-build build/native --azahar-build "$az/build" --out "$az/mm-libs" \
+            --nm "$llvm/bin/llvm-nm" --objcopy "$llvm/bin/llvm-objcopy" --ar "$llvm/bin/llvm-ar" --ranlib ranlib
+          moltenvk=$(find "$az/build/externals/MoltenVK" -path '*dynamic/dylib/macOS/libMoltenVK.dylib' | head -n 1)
+          moltenvk_license=$(find "$az/build/externals/MoltenVK" -maxdepth 2 -name LICENSE | head -n 1)
+          [[ -n "$moltenvk" ]]
+          cmake build/native -DMULTIMELON_3DS=ON -DAZAHAR_SOURCE_DIR="$az/src" -DAZAHAR_BUILD_DIR="$az/build" \
+            -DAZAHAR_LIBS_DIR="$az/mm-libs" -DMULTIMELON_MOLTENVK="$moltenvk" \
+            -DMULTIMELON_MOLTENVK_LICENSE="$moltenvk_license"
+          cmake --build build/native --parallel 3
+          app=$(find build/native -maxdepth 3 -name MultiMelon.app -type d | head -n 1)
+          test -f "$app/Contents/Frameworks/libMoltenVK.dylib"
+          grep -aq "3DS games need Vulkan" "$app/Contents/MacOS/MultiMelon"
       - name: Build and run tests
         run: |
           args=()
