@@ -14,6 +14,7 @@
 // context it doesn't own.
 
 #include "ThreeDS.h"
+#include "ThreeDSRoom.h"
 
 #include <algorithm>
 #include <cctype>
@@ -301,11 +302,16 @@ void Init(const std::string& userDir)
 
     ::Input::RegisterFactory<::Input::ButtonDevice>("multimelon", std::make_shared<ButtonFactory>());
     ::Input::RegisterFactory<::Input::AnalogDevice>("multimelon", std::make_shared<StickFactory>());
+
+    // Azahar's rooms (Create Room / Direct Connect): the network must be up before a game's local wireless
+    // starts, so it can use a room joined later (or earlier, from the menu: then this does nothing)
+    ThreeDSRoom::Init();
 }
 
 void Finish()
 {
     Unload();
+    ThreeDSRoom::Shutdown();
     Common::Log::Stop();
 }
 

@@ -96,6 +96,7 @@ static FILE* FrameLog()
 #include <QLockFile>
 #include "ThreeDS.h"
 #include "ThreeDSNet.h"
+#include "ThreeDSRoom.h"
 #include "UdsLink.h"
 #include "GLThread.h"
 #endif
@@ -1019,20 +1020,14 @@ bool EmuThread::bootThreeDS(const QString& path, QString& error)
     const std::string userDir = ClaimThreeDSDir(emuDirectory + "/3ds", slot).toStdString();
     ThreeDS::Init(userDir);
     ThreeDS::SetResolution(std::clamp(emuInstance->getGlobalConfig().GetInt("3D.GL.ScaleFactor"), 1, 10));
-    // "Wifi as Local Multiplayer": the game's local wireless over the network, with other MultiMelons
-    // and real 3DSes (UdsLink.h). Other MultiMelons on this PC take the next ports of 7072-7075.
-    // (Tests: MULTIMELON_3DS_LINK_PORT, _PEERS "ip:port,...", _LOOPBACK=1)
-    if (Config::GetGlobalTable().GetBool("MP.DSBridge"))
-    {
-        const char* port = std::getenv("MULTIMELON_3DS_LINK_PORT");
-        const char* peers = std::getenv("MULTIMELON_3DS_LINK_PEERS");
-        const char* loop = std::getenv("MULTIMELON_3DS_LINK_LOOPBACK");
-        if (!ThreeDSNet::Start(userDir, port ? (uint16_t)std::atoi(port) : 7072, peers ? peers : "",
-                               loop && loop[0] == '1', port ? 1 : 4))
-            emuInstance->osdAddMessage(0xFFA0A0, "Wifi as Local Multiplayer: no network port free (7072-7075)");
-    }
-    else
+    // the game's local wireless: through a room (Create Room / Direct Connect, ThreeDSRoom.h) while in one,
+    // else over "Wifi as Local Multiplayer" if that's on
+    threeDSUserDir = userDir;
+    threeDSInRoom = ThreeDSRoom::InRoom();
+    if (threeDSInRoom)
         ThreeDSNet::Stop();
+    else
+        startThreeDSLink();
     if (slot > 0)
         emuInstance->osdAddMessage(0xA0D0FF, "3DS: copy %d of MultiMelon on this PC: its own 3DS folder (3ds-%d), own saves",
                                    slot + 1, slot + 1);
@@ -1053,6 +1048,24 @@ bool EmuThread::bootThreeDS(const QString& path, QString& error)
     return true;
 }
 
+// "Wifi as Local Multiplayer": the game's local wireless over the network, with other MultiMelons and real
+// 3DSes (UdsLink.h). Other MultiMelons on this PC take the next ports of 7072-7075.
+// (Tests: MULTIMELON_3DS_LINK_PORT, _PEERS "ip:port,...", _LOOPBACK=1)
+void EmuThread::startThreeDSLink()
+{
+    if (!Config::GetGlobalTable().GetBool("MP.DSBridge"))
+    {
+        ThreeDSNet::Stop();
+        return;
+    }
+    const char* port = std::getenv("MULTIMELON_3DS_LINK_PORT");
+    const char* peers = std::getenv("MULTIMELON_3DS_LINK_PEERS");
+    const char* loop = std::getenv("MULTIMELON_3DS_LINK_LOOPBACK");
+    if (!ThreeDSNet::Start(threeDSUserDir, port ? (uint16_t)std::atoi(port) : 7072, peers ? peers : "",
+                           loop && loop[0] == '1', port ? 1 : 4))
+        emuInstance->osdAddMessage(0xFFA0A0, "Wifi as Local Multiplayer: no network port free (7072-7075)");
+}
+
 void EmuThread::stopThreeDS()
 {
     if (!emuInstance->threeDSActive) return;
@@ -1065,6 +1078,21 @@ void EmuThread::stopThreeDS()
 void EmuThread::runThreeDSFrame()
 {
     emuInstance->makeCurrentGL();
+
+    // joined or left a room while the game runs: its local wireless moves (the room, or "Wifi as Local
+    // Multiplayer" again). Best done before the game's Local Wireless menu: a session open on one isn't
+    // carried over to the other.
+    if (const bool inRoom = ThreeDSRoom::InRoom(); inRoom != threeDSInRoom)
+    {
+        threeDSInRoom = inRoom;
+        if (inRoom)
+        {
+            ThreeDSNet::Stop();
+            emuInstance->osdAddMessage(0xA0D0FF, "3DS: local wireless now goes through the room");
+        }
+        else
+            startThreeDSLink();
+    }
 
     // the DS's keys as the 3DS's; a controller's sticks, either of them, as the Circle Pad (the
     // one pushed further), its triggers as ZL and ZR, its Home button as the 3DS's; the
@@ -1138,10 +1166,18 @@ void EmuThread::runThreeDSFrame()
     const double now = SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
     if (now - threeDSMeasureTime >= 1.0)
     {
-        char title[100];
+        char title[160];
         const char* speedText = threeDSSlow ? ", slow motion" : threeDSFast ? ", fast forward" : !emuInstance->doLimitFPS ? ", unlimited" : "";
-        char linkText[48] = "";
-        if (UdsLink::Running())
+        char linkText[64] = "";
+        if (threeDSInRoom)
+        {
+            const ThreeDSRoom::Info room = ThreeDSRoom::GetInfo();
+            if (room.state == ThreeDSRoom::State::Joined)
+                snprintf(linkText, sizeof(linkText), ", room: %zu in %.24s", room.members.size(), room.roomName.c_str());
+            else
+                snprintf(linkText, sizeof(linkText), ", joining the room");
+        }
+        else if (UdsLink::Running())
             snprintf(linkText, sizeof(linkText), ", %d nearby", UdsLink::GetStats().peers);
         snprintf(title, sizeof(title), "[%.0f] MultiMelon " WIDEMELON_VERSION " (3DS%s%s)", threeDSFrames / (now - threeDSMeasureTime), speedText, linkText);
         changeWindowTitle(title);

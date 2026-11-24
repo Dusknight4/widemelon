@@ -137,6 +137,11 @@ private slots:
     void onMPNewInstance();
     void onMPDSBridge(bool checked);
     void onMPOnline();
+#ifdef MULTIMELON_3DS
+    // MultiMelon: Azahar's rooms for 3DS games (RoomDialogs.h)
+    void onRoomEvent(int kind, QString text);
+    void updateRoomActions();
+#endif
     void onLANStartHost();
     void onLANStartClient();
     void onNPStartHost();
@@ -274,6 +279,12 @@ public:
     QAction* actMPNewInstance;
     QAction* actMPDSBridge;
     QAction* actMPOnline;
+#ifdef MULTIMELON_3DS
+    QAction* actRoomCreate;
+    QAction* actRoomConnect;
+    QAction* actRoomShow;
+    QAction* actRoomLeave;
+#endif
     QAction* actLANStartHost;
     QAction* actLANStartClient;
     QAction* actNPStartHost;

@@ -82,6 +82,10 @@
 #include "DsLink.h"
 #include "LANDialog.h"
 #include "OnlineLocalDialog.h"
+#ifdef MULTIMELON_3DS
+#include "RoomDialogs.h"
+#include "ThreeDSRoom.h"
+#endif
 
 //#include "main_shaders.h"
 
@@ -447,6 +451,25 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
                 // name and password; see net/OnlineLocal.h)
                 actMPOnline = submenu->addAction("Online as Local...");
                 connect(actMPOnline, &QAction::triggered, this, &MainWindow::onMPOnline);
+
+#ifdef MULTIMELON_3DS
+                // MultiMelon: 3DS games' local wireless through an Azahar room, over the internet (as in
+                // Azahar: one player creates the room, the others direct-connect to it; RoomDialogs.h)
+                submenu->addSeparator();
+                actRoomCreate = submenu->addAction("Create Room (3DS games)...");
+                connect(actRoomCreate, &QAction::triggered, this, [this] { CreateRoomDialog::openDlg(this); });
+                actRoomConnect = submenu->addAction("Direct Connect to Room (3DS games)...");
+                connect(actRoomConnect, &QAction::triggered, this, [this] { DirectConnectDialog::openDlg(this); });
+                actRoomShow = submenu->addAction("Show Current Room...");
+                connect(actRoomShow, &QAction::triggered, this, [this] { RoomWindow::openDlg(this); });
+                actRoomLeave = submenu->addAction("Leave Room");
+                connect(actRoomLeave, &QAction::triggered, this, [this] {
+                    ThreeDSRoom::Leave();
+                    updateRoomActions();
+                });
+                connect(RoomUi::Notifier::get(), &RoomUi::Notifier::roomEvent, this, &MainWindow::onRoomEvent);
+                updateRoomActions();
+#endif
 
                 submenu->addSeparator();
 
@@ -2110,6 +2133,33 @@ void MainWindow::onMPOnline()
 {
     OnlineLocalDialog::openDlg(this, emuThread);
 }
+
+#ifdef MULTIMELON_3DS
+void MainWindow::updateRoomActions()
+{
+    if (!hasMenu) return;
+    const ThreeDSRoom::Info i = ThreeDSRoom::GetInfo();
+    const bool in = ThreeDSRoom::InRoom() || i.hosting;
+    actRoomShow->setEnabled(in);
+    actRoomLeave->setEnabled(in);
+    actRoomLeave->setText(i.hosting ? "Close Room" : "Leave Room");
+}
+
+void MainWindow::onRoomEvent(int kind, QString text)
+{
+    updateRoomActions();
+    // (on screen too, for a game in full screen)
+    const QByteArray t = text.left(120).toUtf8();
+    if (kind == 1)
+        emuInstance->osdAddMessage(0xFFFFFF, "%s", t.constData());
+    else if (kind == 2)
+        emuInstance->osdAddMessage(0xA0D0FF, "%s", t.constData());
+    else if (!text.isEmpty())
+        emuInstance->osdAddMessage(0xFFA0A0, "Room: %s", t.constData());
+    else if (const ThreeDSRoom::Info i = ThreeDSRoom::GetInfo(); i.state == ThreeDSRoom::State::Joined)
+        emuInstance->osdAddMessage(0xA0FFA0, "Joined the room %s", i.roomName.c_str());
+}
+#endif
 
 void MainWindow::onMPDSBridge(bool checked)
 {

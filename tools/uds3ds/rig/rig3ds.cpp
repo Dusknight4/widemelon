@@ -59,6 +59,7 @@ extern "C" __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned
 #include "lodepng.h"
 
 #include "ThreeDSNet.h"
+#include "ThreeDSRoom.h"
 #include "UdsLink.h"
 
 namespace
@@ -392,7 +393,48 @@ int main(int argc, char** argv)
                                                                            : AudioCore::InputType::Null;
     }
 
-    if (!std::getenv("RIG_NO_LINK"))
+    // an Azahar room (ThreeDSRoom.h) in place of the link: RIG_ROOM_HOST=port opens one (on RIG_ROOM_BIND, default
+    // 127.0.0.1) and joins it; RIG_ROOM_JOIN=address:port joins one. RIG_ROOM_NICK, RIG_ROOM_PASSWORD.
+    ThreeDSRoom::Init();     // (before the game starts, as MultiMelon: its local wireless can then use a room)
+    const char* roomHost = std::getenv("RIG_ROOM_HOST");
+    const char* roomJoin = std::getenv("RIG_ROOM_JOIN");
+    const bool useRoom = roomHost || roomJoin;
+    if (useRoom)
+    {
+        ThreeDSRoom::SetEventHandler([](int kind, const std::string& text) {
+            const auto info = ThreeDSRoom::GetInfo();
+            static const char* states[] = {"idle", "joining", "joined", "failed"};
+            if (kind == 0)
+                std::printf("room: %s%s%s\n", states[(int)info.state], text.empty() ? "" : ": ", text.c_str());
+            else
+                std::printf("room: %s\n", text.c_str());
+            std::fflush(stdout);
+        });
+        const char* nickEnv = std::getenv("RIG_ROOM_NICK");
+        const char* passEnv = std::getenv("RIG_ROOM_PASSWORD");
+        const std::string nick = nickEnv ? nickEnv : "Rig console", pass = passEnv ? passEnv : "";
+        if (roomHost)
+        {
+            const char* bind = std::getenv("RIG_ROOM_BIND");
+            const std::string err = ThreeDSRoom::Host("Rig room", nick, (uint16_t)std::atoi(roomHost), 8, pass,
+                                                      bind ? bind : "127.0.0.1");
+            std::printf("room: hosting on port %s%s%s\n", roomHost, err.empty() ? "" : ": ", err.c_str());
+            if (!err.empty()) return 1;
+        }
+        else
+        {
+            const std::string at = roomJoin;
+            const size_t colon = at.rfind(':');
+            const std::string address = colon == std::string::npos ? at : at.substr(0, colon);
+            const uint16_t port = colon == std::string::npos ? ThreeDSRoom::DefaultPort
+                                                             : (uint16_t)std::atoi(at.c_str() + colon + 1);
+            ThreeDSRoom::Join(address, port, nick, pass);
+            std::printf("room: joining %s:%u as %s\n", address.c_str(), (unsigned)port, nick.c_str());
+        }
+        std::fflush(stdout);
+    }
+
+    if (!std::getenv("RIG_NO_LINK") && !useRoom)
     {
         const char* port = std::getenv("RIG_LINK_PORT");
         const char* peers = std::getenv("RIG_LINK_PEERS");
@@ -550,11 +592,21 @@ int main(int argc, char** argv)
         }
         if (t >= nextReport)
         {
-            const auto s = UdsLink::GetStats();
-            char rough[64] = "";
-            if (s.dropped || s.doubled) std::snprintf(rough, sizeof(rough), ", dropped %u, doubled %u", s.dropped, s.doubled);
-            std::printf("[%5.1f s] frames %lu (%.0f a second), link: %d nearby, frames out %u in %u%s\n", t, window.Frames,
-                        (window.Frames - reportFrames) / 5.0, s.peers, s.framesOut, s.framesIn, rough);
+            if (useRoom)
+            {
+                const auto r = ThreeDSRoom::GetInfo();
+                static const char* states[] = {"idle", "joining", "joined", "failed"};
+                std::printf("[%5.1f s] frames %lu (%.0f a second), room: %s, %zu members\n", t, window.Frames,
+                            (window.Frames - reportFrames) / 5.0, states[(int)r.state], r.members.size());
+            }
+            else
+            {
+                const auto s = UdsLink::GetStats();
+                char rough[64] = "";
+                if (s.dropped || s.doubled) std::snprintf(rough, sizeof(rough), ", dropped %u, doubled %u", s.dropped, s.doubled);
+                std::printf("[%5.1f s] frames %lu (%.0f a second), link: %d nearby, frames out %u in %u%s\n", t, window.Frames,
+                            (window.Frames - reportFrames) / 5.0, s.peers, s.framesOut, s.framesIn, rough);
+            }
             reportFrames = window.Frames;
             std::fflush(stdout);
             nextReport += 5.0;
@@ -566,6 +618,7 @@ int main(int argc, char** argv)
     std::printf("core shut down\n");
     std::fflush(stdout);
     ThreeDSNet::Stop();
+    ThreeDSRoom::Leave();
     std::printf("done after %lu frames\n", window.Frames);
     std::fflush(stdout);
     Common::Log::Stop();

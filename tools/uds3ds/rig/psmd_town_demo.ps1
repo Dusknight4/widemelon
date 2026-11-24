@@ -24,6 +24,8 @@ param(
     [double]$Burst = 1,
     [int]$Delay = 0,
     [int]$Jitter = 0,
+    # an Azahar room (Create Room / Direct Connect) instead of the link: console A opens it, all join
+    [switch]$Room,
     [string]$Root = (Join-Path $env:LOCALAPPDATA "MultiMelonRig")
 )
 $ErrorActionPreference = "Stop"
@@ -37,7 +39,7 @@ function Send([string]$c, [string]$keys, [string]$shot) {
     else { & $cmd -I $c -Keys $keys -Root $Root | Out-Null }
 }
 
-& $pair -Up -Consoles $Consoles -Cia $Cia -Save $Save -Root $Root -Loss $Loss -Burst $Burst -Delay $Delay -Jitter $Jitter
+& $pair -Up -Consoles $Consoles -Cia $Cia -Save $Save -Root $Root -Loss $Loss -Burst $Burst -Delay $Delay -Jitter $Jitter -Room:$Room
 
 # boot (title screen after ~25 s), Start, then the Main Menu: the gear icon (Multiplayer), Local Wireless.
 # (the book icon left of the gear is Delete Save: never press A on it)

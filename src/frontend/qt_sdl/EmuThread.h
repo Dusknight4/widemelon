@@ -124,6 +124,10 @@ public:
     unsigned threeDSFrames = 0;
     double threeDSMeasureTime = 0.0;
     bool threeDSFast = false, threeDSSlow = false;
+    // "Wifi as Local Multiplayer" for the running game (off while in a room: ThreeDSRoom.h)
+    void startThreeDSLink();
+    std::string threeDSUserDir;
+    bool threeDSInRoom = false;
 #endif
     int bootFirmware(QString& errorstr);
     int insertCart(const QStringList& filename, bool gba, QString& errorstr);

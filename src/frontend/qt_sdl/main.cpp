@@ -65,6 +65,9 @@
 
 #include "CLI.h"
 #include "WideMelonSetup.h"
+#ifdef MULTIMELON_3DS
+#include "RoomDialogs.h"
+#endif
 
 #include "Net_PCap.h"
 #include "Net_Slirp.h"
@@ -401,6 +404,15 @@ int main(int argc, char** argv)
             QApplication::setStyle(uitheme);
         }
     }
+
+#ifdef MULTIMELON_3DS
+    // (testing) the room dialogs drawn into pictures, never shown, then quit: MULTIMELON_UI_SNAPSHOT=<folder>
+    if (const char* snap = getenv("MULTIMELON_UI_SNAPSHOT"))
+    {
+        RoomUi::Snapshot(QString::fromLocal8Bit(snap));
+        return 0;
+    }
+#endif
 
     // fix for Wayland OpenGL glitches
     QGuiApplication::setAttribute(Qt::AA_NativeWindows, false);

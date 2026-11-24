@@ -13,6 +13,7 @@ INC="-I/c/msys64/ucrt64/include/SDL2 -I$M -I$B/src -I$A/src -I$A/externals/boost
 mkdir -p obj
 g++ -std=gnu++20 -O2 -msse4.2 $DEFS $INC -c "$HERE/rig3ds.cpp" -o obj/rig3ds.o &
 g++ -std=gnu++20 -O2 -msse4.2 $DEFS $INC -c $M/ThreeDSNet.cpp -o obj/ThreeDSNet.o &
+g++ -std=gnu++20 -O2 -msse4.2 $DEFS $INC -c $M/ThreeDSRoom.cpp -o obj/ThreeDSRoom.o &
 g++ -std=gnu++17 -O2 -c $M/UdsLink.cpp -o obj/UdsLink.o &
 wait
 LIBS=""
@@ -25,6 +26,6 @@ for l in src/core/libcitra_core.a src/video_core/libvideo_core.a src/audio_core/
          externals/cubeb/libcubeb.a externals/soundtouch/libSoundTouch.a externals/faad2/libfaad2.a \
          externals/lodepng/liblodepng.a externals/xxHash/cmake_unofficial/libxxhash.a externals/libzstd_seekable.a \
          externals/zstd/build/cmake/lib/libzstd.a; do LIBS="$LIBS $B/$l"; done
-g++ -static -o rig3ds.exe obj/rig3ds.o obj/ThreeDSNet.o obj/UdsLink.o -Wl,--start-group $LIBS -Wl,--end-group \
+g++ -static -o rig3ds.exe obj/rig3ds.o obj/ThreeDSNet.o obj/ThreeDSRoom.o obj/UdsLink.o -Wl,--start-group $LIBS -Wl,--end-group \
     $(pkg-config --static --libs sdl2 | sed 's/-mwindows//; s/-lSDL2main//') -lopengl32 -lwinmm -lws2_32 -lpsapi -limm32 -lversion -lbcrypt -lcrypt32 -lole32 -luuid -lavrt -lksuser -lssp -liphlpapi
 echo built rig3ds.exe

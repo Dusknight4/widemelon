@@ -192,6 +192,29 @@ jitter 20 gave round trips of 40-62 ms; 5% doubled gave 5.0%; `cut` dropped ever
   sender). A real 3DS host most likely ignores a console that's no longer connected to it, so don't rely on that
   recovery.
 
+## Azahar rooms instead of the link
+MultiMelon also has Azahar's multiplayer rooms for playing over the internet: System > Multiplayer > *Create Room
+(3DS games)* and *Direct Connect to Room*. One player runs a room (UDP port 24872 by default), and the others
+connect to it. It's Azahar's own room code and protocol, so Azahar players can join the same room. The rig does
+it too:
+
+```powershell
+.\rig_pair.ps1 -Up -Room -Cia ... -Save ...                      # A opens a room on 127.0.0.1:24872, all join it
+.\rig_pair.ps1 -Up -Room -RoomPassword secret1 -Consoles 3 ...   # with a password, three players
+.\psmd_town_demo.ps1 -Room -Cia ... -Save ...                    # the worked example through a room
+```
+- The consoles join as "Console A", "Console B", .... Joins, departures and errors show in `A.out` as `room: ...`
+  lines, and the progress lines say `room: joined, N members`.
+- In a room the game's local wireless goes through it, not the link, so the rough-link options don't apply.
+- **Tested (2026-11-23, v1-alpha2):**
+  - 2 consoles: Host/Join, Check link, Start game, and walking in town.
+  - 3 consoles in a password room: "Players: 3".
+  - A wrong password is refused ("Wrong password for this room."), and so is a nickname already in use.
+- **By hand:** `RIG_ROOM_HOST=24872` opens a room (on `RIG_ROOM_BIND`, default 127.0.0.1) and joins it;
+  `RIG_ROOM_JOIN=address:port` joins one; `RIG_ROOM_NICK` (4 to 20 letters, digits, spaces, `.`, `_`, `-`) and
+  `RIG_ROOM_PASSWORD` set your nickname and the password. To join a real MultiMelon or Azahar room elsewhere, use its
+  address (that hasn't been tried).
+
 ## A tested path through PSMD (v1-alpha2, the test save, 2026-11-15, full speed)
 This is what `psmd_town_demo.ps1` does, step by step:
 
@@ -241,6 +264,7 @@ Environment variables:
 | `RIG_LINK_PEERS` | `ip:port,...`: hellos go there instead of by broadcast |
 | `RIG_LINK_LOOPBACK=1` | bind to 127.0.0.1 only |
 | `RIG_LINK_LOSS`, `RIG_LINK_BURST`, `RIG_LINK_DELAY_MS`, `RIG_LINK_JITTER_MS`, `RIG_LINK_DUP`, `RIG_LINK_REORDER=1`, `RIG_LINK_SEED` | a rough link from the start (see "A rough link") |
+| `RIG_ROOM_HOST`, `RIG_ROOM_JOIN`, `RIG_ROOM_BIND`, `RIG_ROOM_NICK`, `RIG_ROOM_PASSWORD` | an Azahar room instead of the link (see "Azahar rooms instead of the link") |
 | `RIG_NO_LINK=1` | no link: the game's local wireless goes nowhere |
 | `RIG_NO_INSTALL=1` | a `.cia` TITLE is already installed: just start it |
 | `RIG_CMD` | the command file (see above) |
