@@ -248,14 +248,17 @@ jobs:
           az="$RUNNER_TEMP/azahar"
           python tools/azahar_libs.py --macho --mm-build build/native --azahar-build "$az/build" --out "$az/mm-libs" \
             --nm "$llvm/bin/llvm-nm" --objcopy "$llvm/bin/llvm-objcopy" --ar "$llvm/bin/llvm-ar" --ranlib ranlib
-          moltenvk=$(find "$az/build/externals/MoltenVK" -path '*dynamic/dylib/macOS/libMoltenVK.dylib' | head -n 1)
-          moltenvk_license=$(find "$az/build/externals/MoltenVK" -maxdepth 2 -name LICENSE | head -n 1)
+          moltenvk=$(find "$az/build/externals/MoltenVK" -path '*dynamic/dylib/macOS/libMoltenVK.dylib' -print -quit)
+          moltenvk_license=$(find "$az/build/externals/MoltenVK" -maxdepth 2 -name LICENSE -print -quit)
           [[ -n "$moltenvk" ]]
+          # (macOS 13.4 or later, as Azahar's core is built for; the room dialogs' Qt code is generated afresh:
+          # a reconfigured build doesn't notice the sources added)
           cmake build/native -DMULTIMELON_3DS=ON -DAZAHAR_SOURCE_DIR="$az/src" -DAZAHAR_BUILD_DIR="$az/build" \
             -DAZAHAR_LIBS_DIR="$az/mm-libs" -DMULTIMELON_MOLTENVK="$moltenvk" \
-            -DMULTIMELON_MOLTENVK_LICENSE="$moltenvk_license"
+            -DMULTIMELON_MOLTENVK_LICENSE="$moltenvk_license" -DCMAKE_OSX_DEPLOYMENT_TARGET=13.4
+          rm -rf build/native/src/frontend/qt_sdl/melonDS_autogen
           cmake --build build/native --parallel 3
-          app=$(find build/native -maxdepth 3 -name MultiMelon.app -type d | head -n 1)
+          app=$(find build/native -maxdepth 3 -name MultiMelon.app -type d -print -quit)
           test -f "$app/Contents/Frameworks/libMoltenVK.dylib"
           grep -aq "3DS games need Vulkan" "$app/Contents/MacOS/MultiMelon"
       - name: Build and run tests
