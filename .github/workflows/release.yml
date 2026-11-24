@@ -20,6 +20,11 @@ on:
         required: false
         type: boolean
         default: false
+      macos_arm64_runner:
+        description: Runner for the Apple Silicon package (macos-14 when macos-15 has no capacity)
+        required: false
+        type: string
+        default: macos-15
 
 permissions:
   contents: read
@@ -44,6 +49,7 @@ jobs:
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
           PUBLISH_AUR: ${{ inputs.publish_aur }}
           MACOS_ONLY: ${{ inputs.macos_only }}
+          ARM64_RUNNER: ${{ inputs.macos_arm64_runner || 'macos-15' }}
         run: |
           set -euo pipefail
           version=$(sed -n 's/^set(WIDEMELON_VERSION "\([0-9.]*\)")/\1/p' CMakeLists.txt)
@@ -58,7 +64,8 @@ jobs:
           fi
           windows='{"platform":"windows-x86_64","runner":"windows-2025","preset":"release-windows-x86_64","triplet":"x64-windows-static-release","release_asset":"Windows-x86_64.exe"}'
           mac_x86_64='{"platform":"macos-x86_64","runner":"macos-15-intel","preset":"release-mac-x86_64","triplet":"x64-osx-13-release","release_asset":"macOS-x86_64.dmg","arch":"x86_64"}'
-          mac_arm64='{"platform":"macos-arm64","runner":"macos-15","preset":"release-mac-arm64","triplet":"arm64-osx-13-release","release_asset":"macOS-arm64.dmg","arch":"arm64"}'
+          [[ "$ARM64_RUNNER" =~ ^macos-[0-9]+$ ]]
+          mac_arm64='{"platform":"macos-arm64","runner":"'"$ARM64_RUNNER"'","preset":"release-mac-arm64","triplet":"arm64-osx-13-release","release_asset":"macOS-arm64.dmg","arch":"arm64"}'
           if [[ "$MACOS_ONLY" == true ]]; then
             echo "native=[$mac_x86_64,$mac_arm64]" >> "$GITHUB_OUTPUT"
           else
