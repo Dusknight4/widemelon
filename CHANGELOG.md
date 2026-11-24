@@ -153,6 +153,48 @@
 - **Online as Local.** System > Multiplayer > *Online as Local...*:
   local wireless with a friend's WideMelon over the internet, joined by a room
   name and password.
+- **3DS games.** Open one as you open a DS game: MultiMelon plays it with
+  [Azahar](https://github.com/azahar-emu/azahar)'s emulation core (release
+  2126.2) in its own window, with its own settings, controls and screen
+  layouts. Files: .3ds, .cci, .cxi, .3dsx, .app, .elf and .cia (a CIA is
+  installed into the virtual 3DS first, then its game starts; an update or
+  DLC is only installed). Games must be decrypted (GodMode9 on a 3DS).
+  - The top screen and the touchscreen are laid out like a DS's, in every
+    screen layout. The internal resolution is the OpenGL renderer's scale
+    (Config > Video settings). Savestates use the same slots as DS games.
+  - Controls are the DS's bindings, plus either stick as the Circle Pad, the
+    triggers as ZL and ZR and the controller's Guide button as Home. Fast
+    forward, slow motion, the frame limiter, mute and volume work as for DS
+    games.
+  - The 3DS's saves, virtual SD card and NAND are in the `3ds` folder; a
+    second MultiMelon running at the same time uses `3ds-2`, so two players
+    can play on one PC.
+  - Windows draws with OpenGL 4.3. On macOS, where Azahar has no OpenGL
+    renderer, Azahar draws with Vulkan (MoltenVK, included in the app) and
+    MultiMelon shows its frames; not yet tried on a real Mac. The Mac app now
+    needs macOS 13.4 or later, as Azahar's core does.
+- **3DS local wireless over the network.** With *Wifi as Local Multiplayer*
+  on, a 3DS game's local wireless (the Delta PSMD mod's multiplayer, for
+  example) reaches the other MultiMelons on the network: UDP ports 7072-7075,
+  up to four players. Fixed in Azahar's local wireless on the way: a console
+  that dropped out could never join again, and two consoles joining at the
+  same moment could be given the same player number.
+- **Rooms: play with friends over the internet.** System > Multiplayer >
+  *Create Room...* opens a room (UDP port 24872 by default; friends outside
+  your network need that port forwarded to your PC on your router).
+  *Direct Connect to Room...* joins one by its address, with its password if
+  it has one, and keeps the rooms you joined (*Recent*, with who was there)
+  and your *Favorites* (with their passwords). *Show Current Room...* lists
+  the players and has a chat.
+  - While you are in a room, the game's local wireless goes through it, for
+    DS and 3DS games alike, so one room covers whatever each player runs.
+    A DS game plays as with *Online as Local* (tested with two players);
+    a 3DS game uses Azahar's room protocol.
+  - The rooms are Azahar's (protocol version 4), so Azahar players should be
+    able to join a MultiMelon room for 3DS games; not yet tried.
+- **Crash reports (Windows).** If MultiMelon crashes, it writes
+  `crashes/crash-<date>.txt` (the error, the registers and the call stack)
+  and a `.dmp` next to itself.
 - **HeartGold/SoulSilver: no blue screen after cancelling a link trade or
   battle.** These games keep at most 32 jobs for the next VBlank; returning to
   the Union Room map they can queue more than that at once, and with a link up
