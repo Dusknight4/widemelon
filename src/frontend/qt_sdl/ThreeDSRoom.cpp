@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <cstring>
 #include <mutex>
 #include <random>
 #include <regex>
@@ -34,6 +35,14 @@ Network::RoomMember::CallbackHandle<Network::RoomMember::State> g_onState;
 Network::RoomMember::CallbackHandle<Network::RoomMember::Error> g_onError;
 Network::RoomMember::CallbackHandle<Network::ChatEntry> g_onChat;
 Network::RoomMember::CallbackHandle<Network::StatusMessageEntry> g_onStatus;
+Network::RoomMember::CallbackHandle<Network::WifiPacket> g_onWifi;
+
+// DS games through the room: WifiPackets of this type (Azahar's are 0-5; its clients ignore others), whose data
+// starts "MMDS" + version 1, then the DsBridge message
+constexpr auto kDsPacketType = static_cast<Network::WifiPacket::PacketType>(0x4D);
+constexpr uint8_t kDsMagic[5] = {'M', 'M', 'D', 'S', 1};
+std::mutex g_dsLock;
+std::function<void(const uint8_t*, size_t)> g_dsReceiver;
 
 void Fire(int kind, const std::string& text)
 {
@@ -117,8 +126,50 @@ bool Init()
             }
             Fire(2, m.nickname + what);
         });
+        g_onWifi = member->BindOnWifiPacketReceived([](const Network::WifiPacket& p) {
+            if (p.type != kDsPacketType || p.data.size() <= sizeof(kDsMagic) ||
+                std::memcmp(p.data.data(), kDsMagic, sizeof(kDsMagic)) != 0)
+                return;
+            std::function<void(const uint8_t*, size_t)> fn;
+            {
+                std::lock_guard l(g_dsLock);
+                fn = g_dsReceiver;
+            }
+            if (fn) fn(p.data.data() + sizeof(kDsMagic), p.data.size() - sizeof(kDsMagic));
+        });
     }
     return true;
+}
+
+int Others()
+{
+    if (!g_init) return 0;
+    auto member = Network::GetRoomMember().lock();
+    if (!member || !member->IsConnected()) return 0;
+    const Network::RoomMember::MemberList list = member->GetMemberInformation();
+    return list.empty() ? 0 : (int)list.size() - 1;
+}
+
+void SendDs(const uint8_t* msg, size_t len)
+{
+    if (!g_init || !len) return;
+    auto member = Network::GetRoomMember().lock();
+    if (!member || !member->IsConnected()) return;
+    Network::WifiPacket p;
+    p.type = kDsPacketType;
+    p.channel = 0;
+    p.transmitter_address = member->GetMacAddress();
+    p.destination_address = Network::BroadcastMac;
+    p.data.reserve(sizeof(kDsMagic) + len);
+    p.data.insert(p.data.end(), kDsMagic, kDsMagic + sizeof(kDsMagic));
+    p.data.insert(p.data.end(), msg, msg + len);
+    member->SendWifiPacket(p);
+}
+
+void SetDsReceiver(std::function<void(const uint8_t* msg, size_t len)> fn)
+{
+    std::lock_guard l(g_dsLock);
+    g_dsReceiver = std::move(fn);
 }
 
 void Shutdown()
@@ -132,6 +183,7 @@ void Shutdown()
         member->Unbind(g_onError);
         member->Unbind(g_onChat);
         member->Unbind(g_onStatus);
+        member->Unbind(g_onWifi);
     }
     Network::Shutdown();
     std::lock_guard l(g_lock);

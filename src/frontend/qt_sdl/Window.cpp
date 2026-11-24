@@ -453,12 +453,12 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
                 connect(actMPOnline, &QAction::triggered, this, &MainWindow::onMPOnline);
 
 #ifdef MULTIMELON_3DS
-                // MultiMelon: 3DS games' local wireless through an Azahar room, over the internet (as in
+                // MultiMelon: a game's local wireless (DS or 3DS) through an Azahar room, over the internet (as in
                 // Azahar: one player creates the room, the others direct-connect to it; RoomDialogs.h)
                 submenu->addSeparator();
-                actRoomCreate = submenu->addAction("Create Room (3DS games)...");
+                actRoomCreate = submenu->addAction("Create Room...");
                 connect(actRoomCreate, &QAction::triggered, this, [this] { CreateRoomDialog::openDlg(this); });
-                actRoomConnect = submenu->addAction("Direct Connect to Room (3DS games)...");
+                actRoomConnect = submenu->addAction("Direct Connect to Room...");
                 connect(actRoomConnect, &QAction::triggered, this, [this] { DirectConnectDialog::openDlg(this); });
                 actRoomShow = submenu->addAction("Show Current Room...");
                 connect(actRoomShow, &QAction::triggered, this, [this] { RoomWindow::openDlg(this); });

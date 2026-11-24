@@ -4,10 +4,11 @@
 #pragma once
 
 // A room is a small server one player runs (UDP, port 24872 by default) that every player connects to,
-// over the internet or a LAN. While this MultiMelon is in a room, the 3DS game's local wireless goes
-// through it (Azahar's own room protocol, so Azahar players can be in the same room) instead of
-// "Wifi as Local Multiplayer". No Qt here: the rig uses it too.
+// over the internet or a LAN. While this MultiMelon is in a room, a game's local wireless goes through it
+// instead of "Wifi as Local Multiplayer": a 3DS game's in Azahar's own room protocol (so Azahar players can
+// be in the same room), a DS game's as "Online as Local" messages (SendDs). No Qt here: the rig uses it too.
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -59,6 +60,15 @@ Info GetInfo();
 // joining or joined: the 3DS game's local wireless goes to the room
 bool InRoom();
 void SendChat(const std::string& text);
+
+// members of the room besides this MultiMelon (0 when not in one)
+int Others();
+
+// DS games' local wireless through the room ("Online as Local"'s DsBridge messages): to everyone else in the
+// room, as Azahar WifiPackets of a type of MultiMelon's own (3DS games and Azahar ignore it). What comes in from
+// the others goes to the receiver, on the network's thread.
+void SendDs(const uint8_t* msg, size_t len);
+void SetDsReceiver(std::function<void(const uint8_t* msg, size_t len)> fn);
 
 // What happens, called on the network's own thread: kind 0 the state changed (text: the error if any),
 // 1 a chat line ("nickname: text"), 2 someone joined/left ("Summer joined the room").

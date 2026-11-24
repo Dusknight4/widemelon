@@ -23,7 +23,9 @@
 // Both players enter the same room name and password; one hosts (opens the room), the
 // other joins. Turn it on before entering the Union Room (or another wireless menu).
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace melonDS { class NDS; }
@@ -45,6 +47,19 @@ void RoomIdFrom(const std::string& name, const std::string& password, uint8_t ou
 
 bool Start(const Settings& s);
 void Stop();
+
+// MultiMelon's rooms (Create Room / Direct Connect) carry it instead of a room server: send passes a DsBridge
+// message to everyone else in the room, others says how many others are in it. Messages that come in go to
+// Deliver (any thread). Stop ends it as it ends the other.
+struct ExternalLink
+{
+    std::function<void(const uint8_t* msg, size_t len)> send;
+    std::function<int()> others;
+};
+bool StartExternal(const ExternalLink& link);
+bool External();        // on through a MultiMelon room
+void Deliver(const uint8_t* msg, size_t len);
+
 bool Enabled();
 State GetState();
 int PingMs();               // round trip to the room server (-1 not known)

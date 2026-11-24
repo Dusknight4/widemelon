@@ -23,6 +23,9 @@
 
 #include "OnlineLocalDialog.h"
 #include "OnlineLocal.h"
+#ifdef MULTIMELON_3DS
+#include "ThreeDSRoom.h"
+#endif
 #include "EmuThread.h"
 #include "Config.h"
 
@@ -151,6 +154,20 @@ void OnlineLocalDialog::refresh()
     const bool on = OnlineLocal::Enabled();
     status->setText(on ? QString::fromStdString(OnlineLocal::StatusText()) : "Not connected.");
     connectBtn->setText(on ? "Disconnect" : "Connect");
+#ifdef MULTIMELON_3DS
+    // (in a room, Create Room / Direct Connect: the room carries it; leave the room to use a room server)
+    if (OnlineLocal::External() || ThreeDSRoom::InRoom())
+    {
+        status->setText("You're in a room (Multiplayer > Create Room / Direct Connect): local wireless goes through it. "
+                        "Leave the room to use a room server here instead.\n" +
+                        QString::fromStdString(OnlineLocal::StatusText()));
+        for (QWidget* w : {(QWidget*)hostBtn, (QWidget*)joinBtn, (QWidget*)room, (QWidget*)password, (QWidget*)server,
+                           (QWidget*)runServer, (QWidget*)connectBtn})
+            w->setEnabled(false);
+        return;
+    }
+    connectBtn->setEnabled(true);
+#endif
     for (QWidget* w : {(QWidget*)hostBtn, (QWidget*)joinBtn, (QWidget*)room, (QWidget*)password, (QWidget*)server})
         w->setEnabled(!on);
     runServer->setEnabled(!on && hostBtn->isChecked());

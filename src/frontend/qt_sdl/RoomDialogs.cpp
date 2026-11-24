@@ -216,7 +216,7 @@ void CreateRoomDialog::openDlg(QWidget* parent)
 
 CreateRoomDialog::CreateRoomDialog(QWidget* parent) : QDialog(parent)
 {
-    setWindowTitle("Create Room (3DS games)");
+    setWindowTitle("Create Room");
     setAttribute(Qt::WA_DeleteOnClose);
     connect(this, &QObject::destroyed, [] { current = nullptr; });
     RoomUi::Notifier::get();
@@ -224,9 +224,10 @@ CreateRoomDialog::CreateRoomDialog(QWidget* parent) : QDialog(parent)
     auto cfg = Config::GetGlobalTable();
     auto* layout = new QVBoxLayout(this);
 
-    auto* intro = new QLabel("Open a room on this PC for a 3DS game's local wireless over the internet (as in "
-                             "Azahar). Friends join it with Direct Connect, in MultiMelon or Azahar. Everyone then "
-                             "picks the game's local wireless (Host or Join) as if they were in the same room.");
+    auto* intro = new QLabel("Open a room on this PC so friends can play a game's local wireless with you over the "
+                             "internet, as in Azahar. They join with Direct Connect. Everyone then plays as if in the "
+                             "same room: a DS game's Union Room, or a 3DS game's local wireless (Host or Join). For 3DS "
+                             "games, Azahar players can join the room too.");
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
@@ -342,7 +343,7 @@ static QTreeWidget* MakeRoomList()
 
 DirectConnectDialog::DirectConnectDialog(QWidget* parent) : QDialog(parent)
 {
-    setWindowTitle("Direct Connect to Room (3DS games)");
+    setWindowTitle("Direct Connect to Room");
     setAttribute(Qt::WA_DeleteOnClose);
     connect(this, &QObject::destroyed, [] { current = nullptr; });
     connect(RoomUi::Notifier::get(), &RoomUi::Notifier::roomEvent, this, &DirectConnectDialog::onRoomEvent);
@@ -554,7 +555,7 @@ void RoomWindow::openDlg(QWidget* parent)
 
 RoomWindow::RoomWindow(QWidget* parent) : QDialog(parent)
 {
-    setWindowTitle("Room (3DS games)");
+    setWindowTitle("Room");
     setAttribute(Qt::WA_DeleteOnClose);
     connect(this, &QObject::destroyed, [] { current = nullptr; });
     connect(RoomUi::Notifier::get(), &RoomUi::Notifier::roomEvent, this, &RoomWindow::onRoomEvent);
@@ -589,8 +590,8 @@ RoomWindow::RoomWindow(QWidget* parent) : QDialog(parent)
     row->addLayout(right, 1);
     layout->addLayout(row);
 
-    auto* hint = new QLabel("Join the room before entering the game's local wireless: a session already open on "
-                            "\"Wifi as Local Multiplayer\" doesn't move into the room.");
+    auto* hint = new QLabel("Join the room before entering the game's local wireless (a DS game's Union Room, a 3DS "
+                            "game's Local Wireless menu): a session already open doesn't move into the room.");
     hint->setWordWrap(true);
     hint->setStyleSheet("color: gray");
     layout->addWidget(hint);

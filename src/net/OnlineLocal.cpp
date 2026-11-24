@@ -155,6 +155,11 @@ std::mutex g_inLock;               // what came from the friend, for wmhle
 std::deque<std::vector<uint8_t>> g_inbox;
 std::atomic<bool> g_inboxFull {false};
 
+// MultiMelon's rooms in place of the room server (StartExternal)
+std::mutex g_extLock;
+ExternalLink g_link;
+std::atomic<bool> g_external {false};
+
 // (emulator thread only)
 melonDS::NDS* g_nds = nullptr;
 uint8_t g_mac[6];
@@ -238,7 +243,14 @@ void HostToArm9(uint32_t w) { g_nds->InjectArm7Fifo(w); }
 void HostSend(const uint8_t* msg, unsigned len)
 {
     // (until the friend is in the room there's nobody to hear it: beacons and scans find no one)
-    if (g_state == State::Together) SendRaw(Data, msg, len);
+    if (g_state != State::Together) return;
+    if (g_external)
+    {
+        std::lock_guard l(g_extLock);
+        if (g_link.send) g_link.send(msg, len);
+        return;
+    }
+    SendRaw(Data, msg, len);
 }
 void Drain()
 {
@@ -286,6 +298,11 @@ void Scanline(melonDS::NDS* nds, uint32_t line)
 std::string StatusText()
 {
     std::string s;
+    if (g_external)
+    {
+        if (g_state == State::Together) return "Through the room: others are in it. Enter the Union Room now";
+        if (g_state == State::Waiting) return "Through the room: waiting for someone else to join it";
+    }
     switch (g_state.load())
     {
         case State::Off: return "Off";
@@ -352,8 +369,38 @@ bool Start(const Settings& s)
     return true;
 }
 
+bool StartExternal(const ExternalLink& link)
+{
+    Stop();
+    {
+        std::lock_guard l(g_extLock);
+        g_link = link;
+    }
+    g_ping = -1;
+    g_external = true;
+    g_state = (link.others && link.others() > 0) ? State::Together : State::Waiting;
+    Log(LogLevel::Info, "Online as Local: through a MultiMelon room\n");
+    return true;
+}
+
+bool External() { return g_external; }
+
+void Deliver(const uint8_t* msg, size_t len)
+{
+    if (!g_external || !len) return;
+    std::lock_guard l(g_inLock);
+    if (g_inbox.size() < 512) g_inbox.emplace_back(msg, msg + len);
+    g_inboxFull = true;
+}
+
 void Stop()
 {
+    if (g_external)
+    {
+        g_external = false;
+        std::lock_guard l(g_extLock);
+        g_link = {};
+    }
     std::lock_guard l(g_lock);
     if (g_sock != kNoSocket)
     {
@@ -385,6 +432,17 @@ int PingMs() { return g_ping; }
 
 void Frame(melonDS::NDS* nds)
 {
+    // (through a room: together as soon as anyone else is in it)
+    if (g_external)
+    {
+        int others = 0;
+        {
+            std::lock_guard l(g_extLock);
+            if (g_link.others) others = g_link.others();
+        }
+        const State now = others > 0 ? State::Together : State::Waiting;
+        if (g_state.exchange(now) != now) Log(LogLevel::Info, "Online as Local: %s\n", StatusText().c_str());
+    }
     const bool on = Enabled();
     if (on && nds != g_nds)
     {

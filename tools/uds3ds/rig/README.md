@@ -265,6 +265,7 @@ Environment variables:
 | `RIG_LINK_LOOPBACK=1` | bind to 127.0.0.1 only |
 | `RIG_LINK_LOSS`, `RIG_LINK_BURST`, `RIG_LINK_DELAY_MS`, `RIG_LINK_JITTER_MS`, `RIG_LINK_DUP`, `RIG_LINK_REORDER=1`, `RIG_LINK_SEED` | a rough link from the start (see "A rough link") |
 | `RIG_ROOM_HOST`, `RIG_ROOM_JOIN`, `RIG_ROOM_BIND`, `RIG_ROOM_NICK`, `RIG_ROOM_PASSWORD` | an Azahar room instead of the link (see "Azahar rooms instead of the link") |
+| `RIG_ROOM_DSPING=1` | (test) in a room, a DS-game message through it every second, and those received counted (`ds out N in M` in the progress lines): DS games share the room with 3DS games |
 | `RIG_NO_LINK=1` | no link: the game's local wireless goes nowhere |
 | `RIG_NO_INSTALL=1` | a `.cia` TITLE is already installed: just start it |
 | `RIG_CMD` | the command file (see above) |

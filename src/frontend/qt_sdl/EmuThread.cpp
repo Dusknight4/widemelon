@@ -435,6 +435,22 @@ void EmuThread::run()
             // first console's wireless while on
             if (emuInstance->getInstanceID() == 0)
             {
+#ifdef MULTIMELON_3DS
+                // MultiMelon: in a room (Create Room / Direct Connect, ThreeDSRoom.h), a DS game's local
+                // wireless goes through it too: "Online as Local" with the room in place of a room server
+                if (const bool inRoom = ThreeDSRoom::InRoom(); inRoom != OnlineLocal::External())
+                {
+                    if (inRoom)
+                    {
+                        ThreeDSRoom::SetDsReceiver([](const uint8_t* msg, size_t len) { OnlineLocal::Deliver(msg, len); });
+                        OnlineLocal::StartExternal({[](const uint8_t* msg, size_t len) { ThreeDSRoom::SendDs(msg, len); },
+                                                    [] { return ThreeDSRoom::Others(); }});
+                        emuInstance->osdAddMessage(0xA0D0FF, "Local wireless now goes through the room");
+                    }
+                    else
+                        OnlineLocal::Stop();
+                }
+#endif
                 OnlineLocal::Frame(emuInstance->nds);
                 DsLink::Frame(emuInstance->nds);
             }

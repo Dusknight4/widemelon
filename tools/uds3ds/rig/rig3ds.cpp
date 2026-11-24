@@ -21,6 +21,8 @@
 // A .cia TITLE is installed first (once is enough: RIG_NO_INSTALL=1 then starts the installed game).
 
 #include <algorithm>
+#include <atomic>
+#include <cstring>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -433,6 +435,15 @@ int main(int argc, char** argv)
         }
         std::fflush(stdout);
     }
+    // (test) RIG_ROOM_DSPING=1: a DS-game message (ThreeDSRoom::SendDs) through the room every second, and those
+    // that come in counted: the room carries DS games' local wireless beside the 3DS game's
+    const bool dsPing = useRoom && std::getenv("RIG_ROOM_DSPING");
+    static std::atomic<unsigned> dsIn {0}, dsBad {0};
+    unsigned dsOut = 0;
+    if (dsPing)
+        ThreeDSRoom::SetDsReceiver([](const uint8_t* msg, size_t len) {
+            (len == 8 && std::memcmp(msg, "DSPING", 6) == 0 ? dsIn : dsBad)++;
+        });
 
     if (!std::getenv("RIG_NO_LINK") && !useRoom)
     {
@@ -500,10 +511,18 @@ int main(int argc, char** argv)
     double nextReport = 5.0, nextCmdCheck = 0.0, nextShot = shotEvery;
     size_t cmdRead = 0;     // (bytes of RIG_CMD done)
     bool touching = false, quit = false;
+    double nextDsPing = 1.0;
     while (!quit)
     {
         const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         if (t >= seconds) break;
+        if (dsPing && t >= nextDsPing && ThreeDSRoom::Others() > 0)
+        {
+            nextDsPing = t + 1.0;
+            const uint8_t msg[8] = {'D', 'S', 'P', 'I', 'N', 'G', (uint8_t)dsOut, (uint8_t)(dsOut >> 8)};
+            ThreeDSRoom::SendDs(msg, sizeof(msg));
+            dsOut++;
+        }
         if (system.RunLoop() != Core::System::ResultStatus::Success)
         {
             std::printf("core stopped at %.1f s\n", t);
@@ -596,8 +615,10 @@ int main(int argc, char** argv)
             {
                 const auto r = ThreeDSRoom::GetInfo();
                 static const char* states[] = {"idle", "joining", "joined", "failed"};
-                std::printf("[%5.1f s] frames %lu (%.0f a second), room: %s, %zu members\n", t, window.Frames,
-                            (window.Frames - reportFrames) / 5.0, states[(int)r.state], r.members.size());
+                char ds[48] = "";
+                if (dsPing) std::snprintf(ds, sizeof(ds), ", ds out %u in %u bad %u", dsOut, dsIn.load(), dsBad.load());
+                std::printf("[%5.1f s] frames %lu (%.0f a second), room: %s, %zu members%s\n", t, window.Frames,
+                            (window.Frames - reportFrames) / 5.0, states[(int)r.state], r.members.size(), ds);
             }
             else
             {
